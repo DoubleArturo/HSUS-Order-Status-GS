@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <style>
+    body { padding: 1rem; }
+    #pdf-link-container { word-break: break-all; }
+    .item-row input, .item-row select { font-size: 0.9rem; }
+    .col-model { min-width: 150px; }
+    .col-sku { min-width: 120px; }
+    .col-qty { min-width: 80px; }
+    .col-price { min-width: 110px; }
+    .col-delete { width: 40px; }
+  </style>
+</head>
+<body>
+  <div class="container-fluid">
+    <h4>Purchase Order (PO) Data Editor</h4>
+    <p class="text-muted">Review and correct PO details.</p>
+
+    <div class="mb-3">
+      <label for="po-select" class="form-label">Select PO to Review/Edit</label>
+      <select id="po-select" class="form-select">
+        <option value="" disabled selected>Loading Data...</option>
+      </select>
+    </div>
+
+    <div id="details-section" class="d-none">
+      <hr>
+      <div id="pdf-link-container" class="mb-3">
+        <a id="pdf-link" href="#" target="_blank" class="btn btn-secondary btn-sm">📄 View Original PO Document (PDF)</a>
+      </div>
+
+      <form id="correction-form">
+        <h5>Basic PO Details</h5>
+        <div class="row g-3 mb-3">
+          
+          <div class="col-md-6">
+            <label for="new-po-number-input" class="form-label">PO Number (Editable)</label>
+            <input type="text" id="new-po-number-input" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-6">
+            <label for="buyer-name-input" class="form-label">Buyer Name (Auto-Populated)</label>
+            <input type="text" id="buyer-name-input" class="form-control form-control-sm" readonly>
+          </div>
+          
+          <div class="col-md-6">
+            <label for="po-received-date-input" class="form-label">PO Received Date</label>
+            <input type="date" id="po-received-date-input" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-6">
+            <label for="rsm-input" class="form-label">Sales Rep (RSM)</label>
+            <input type="text" id="rsm-input" class="form-control form-control-sm">
+          </div>
+          
+          <div class="col-md-6">
+            <label for="payment-term-input" class="form-label">Payment Terms</label>
+            <input type="text" id="payment-term-input" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-6">
+            <label for="spiff-select" class="form-label">SPIFF Eligibility</label>
+            <select id="spiff-select" class="form-select form-select-sm">
+                <option value="">-- Select --</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+            </select>
+          </div>
+        </div>
+        
+        <hr>
+        
+        <h5 class="mt-4">Shipping Information</h5> 
+        <div class="row g-3 mb-3">
+          
+          <div class="col-md-6">
+            <label for="company-input" class="form-label">Shipping Company</label>
+            <input type="text" id="company-input" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-6">
+            <label for="contact-input" class="form-label">Contact Person</label>
+            <input type="text" id="contact-input" class="form-control form-control-sm">
+          </div>
+
+          <div class="col-md-6">
+            <label for="phone-input" class="form-label">Phone Number</label>
+            <input type="text" id="phone-input" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-6"></div>
+
+          <div class="col-md-12">
+            <label for="street-input" class="form-label">Street Address</label>
+            <input type="text" id="street-input" class="form-control form-control-sm">
+          </div>
+          
+          <div class="col-md-5">
+            <label for="city-input" class="form-label">City</label>
+            <input type="text" id="city-input" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-3">
+            <label for="state-input" class="form-label">State/Province</label>
+            <input type="text" id="state-input" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-4">
+            <label for="zipcode-input" class="form-label">Zip/Postal Code</label>
+            <input type="text" id="zipcode-input" class="form-control form-control-sm">
+          </div>
+        </div>
+
+        <h5 class="mt-4">Line Items (Products)</h5>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th class="col-model">Model</th>
+                <th class="col-sku">SKU #</th>
+                <th class="col-qty">QTY</th>
+                <th class="col-price">Unit Price</th>
+                <th class="col-delete"></th>
+              </tr>
+            </thead>
+            <tbody id="items-table-body">
+              </tbody>
+          </table>
+        </div>
+        <button type="button" id="add-item-btn" class="btn btn-outline-primary btn-sm mt-2">
+          <i class="bi bi-plus-circle"></i> Add Product Line
+        </button>
+        <div class="text-end fw-bold mt-2">
+          PO Total: <span id="po-total" class="text-success">$0.00</span>
+        </div>
+        
+        <div class="mt-4">
+          <label for="change-note-input" class="form-label">Correction/Change Reason</label>
+          <textarea id="change-note-input" class="form-control form-control-sm" rows="2" placeholder="Please explain why this PO data is being changed."></textarea>
+        </div>
+
+        <button type="submit" id="save-btn" class="btn btn-success w-100 mt-4">Save Changes (Run in Background)</button>
+      </form>
+    </div>
+
+    <div id="loader" class="d-none spinner-border text-primary mt-3" role="status"></div>
+    <div id="status" class="mt-3"></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  let correctionData = {};
+  let currentPo = null;
+
+  document.addEventListener('DOMContentLoaded', function() {
+    showLoader(true);
+    google.script.run.withSuccessHandler(onDataLoaded).withFailureHandler(onFailure).getCorrectionData();
+    
+    document.getElementById('po-select').addEventListener('change', displayPoDetails);
+    document.getElementById('add-item-btn').addEventListener('click', addNewItemRow);
+    document.getElementById('correction-form').addEventListener('submit', handleFormSubmit);
+  });
+
+  function onDataLoaded(data) {
+    showLoader(false);
+    if (!data.success) {
+      showStatus('Loading Error: ' + data.message, 'danger');
+      return;
+    }
+    correctionData = data;
+    
+    const poSelect = document.getElementById('po-select');
+    poSelect.innerHTML = '<option value="" disabled selected>-- Select PO --</option>';
+    if (data.allPOs.length === 0) {
+      poSelect.innerHTML = '<option value="" disabled selected>No POs currently available for correction</option>';
+      return;
+    }
+    data.allPOs.forEach((po, index) => {
+      const option = new Option(po.poNumber, index);
+      poSelect.add(option);
+    });
+  }
+
+  function displayPoDetails() {
+    const selectedIndex = document.getElementById('po-select').value;
+    if (selectedIndex === "") return;
+    
+    currentPo = correctionData.allPOs[selectedIndex];
+    document.getElementById('details-section').classList.remove('d-none');
+    document.getElementById('pdf-link').href = currentPo.pdfUrl || '#';
+    
+    // Populate Basic Info (包含新欄位)
+    document.getElementById('new-po-number-input').value = currentPo.poNumber || ''; 
+    document.getElementById('buyer-name-input').value = currentPo.buyerName || '';   
+    document.getElementById('po-received-date-input').value = currentPo.poReceivedDate || '';
+    document.getElementById('rsm-input').value = currentPo.rsm || '';
+    document.getElementById('payment-term-input').value = currentPo.paymentTerm || '';
+    document.getElementById('spiff-select').value = currentPo.spiff || '';           
+    
+    // Populate Ship To (重新命名欄位)
+    document.getElementById('company-input').value = currentPo.company || '';           
+    document.getElementById('contact-input').value = currentPo.shipToContact || '';    
+    document.getElementById('phone-input').value = currentPo.shipToPhone || '';        
+    document.getElementById('street-input').value = currentPo.streetAddress || '';     
+    document.getElementById('city-input').value = currentPo.city || '';
+    document.getElementById('state-input').value = currentPo.state || '';
+    document.getElementById('zipcode-input').value = currentPo.zipcode || '';
+
+    const tableBody = document.getElementById('items-table-body');
+    tableBody.innerHTML = '';
+    currentPo.items.forEach(item => {
+      addItemRow(item);
+    });
+    calculateTotal();
+  }
+  
+  function addNewItemRow() {
+    addItemRow({ model: '', sku: '', qty: 1, unitPrice: '' });
+  }
+
+  function addItemRow(item) {
+    const tableBody = document.getElementById('items-table-body');
+    const newRow = tableBody.insertRow();
+    newRow.className = 'item-row';
+    
+    // Model Names 已經在後端排序
+    const modelOptions = correctionData.modelNames.map(name => 
+        `<option value="${name}" ${item.model === name ? 'selected' : ''}>${name}</option>`
+    ).join('');
+
+    newRow.innerHTML = `
+      <td class="col-model"><select class="form-select form-select-sm model-select"><option value="">-- Select Model --</option>${modelOptions}</select></td>
+      <td class="col-sku"><input type="text" class="form-control form-control-sm sku-input" value="${item.sku}" readonly></td>
+      <td class="col-qty"><input type="number" class="form-control form-control-sm qty-input" value="${item.qty}" min="1" step="1"></td>
+      <td class="col-price"><input type="number" class="form-control form-control-sm price-input" step="0.01" value="${item.unitPrice}"></td>
+      <td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove(); calculateTotal();"><i class="bi bi-trash"></i></button></td>
+    `;
+    
+    const modelSelect = newRow.querySelector('.model-select');
+    modelSelect.addEventListener('change', (e) => {
+      updateSkuAndPrice(e.target.closest('tr'));
+      calculateTotal();
+    });
+    newRow.querySelector('.qty-input').addEventListener('input', calculateTotal);
+    newRow.querySelector('.price-input').addEventListener('input', calculateTotal);
+    
+    if(item.model) {
+      updateSkuAndPrice(newRow, item.model, item.sku, item.unitPrice);
+    }
+  }
+  
+  function updateSkuAndPrice(row, model = null, sku = null, price = null) {
+      const selectedModel = model || row.querySelector('.model-select').value;
+      const skuInput = row.querySelector('.sku-input');
+      const priceInput = row.querySelector('.price-input');
+      
+      if (selectedModel && correctionData.modelToSkuMap[selectedModel]) {
+          skuInput.value = sku || correctionData.modelToSkuMap[selectedModel];
+          priceInput.value = price || correctionData.modelToPriceMap[selectedModel];
+      } else {
+          skuInput.value = '';
+          priceInput.value = '';
+      }
+  }
+
+  function calculateTotal() {
+    const itemsTable = document.getElementById('items-table-body');
+    const itemRows = itemsTable.querySelectorAll('.item-row');
+    let total = 0;
+    itemRows.forEach(row => {
+      const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+      const price = parseFloat(row.querySelector('.price-input').value) || 0;
+      total += qty * price;
+    });
+    document.getElementById('po-total').textContent = '$' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function handleFormSubmit(e) {
+    e.preventDefault();
+    const itemsTable = document.getElementById('items-table-body');
+    const itemRows = itemsTable.querySelectorAll('.item-row');
+    const itemsToSave = [];
+    
+    // Collect Data
+    const basicInfo = {
+        newPoNumber: document.getElementById('new-po-number-input').value,
+        buyerName: document.getElementById('buyer-name-input').value,     
+        poReceivedDate: document.getElementById('po-received-date-input').value,
+        rsm: document.getElementById('rsm-input').value,
+        paymentTerm: document.getElementById('payment-term-input').value,
+        spiff: document.getElementById('spiff-select').value,             
+        
+        // Ship To Fields
+        company: document.getElementById('company-input').value,          
+        contact: document.getElementById('contact-input').value,          
+        phone: document.getElementById('phone-input').value,              
+        street: document.getElementById('street-input').value,            
+        city: document.getElementById('city-input').value,
+        state: document.getElementById('state-input').value,
+        zipcode: document.getElementById('zipcode-input').value,
+        
+        changeNote: document.getElementById('change-note-input').value,
+    };
+
+    itemRows.forEach(row => {
+      itemsToSave.push({
+        model: row.querySelector('.model-select').value,
+        sku: row.querySelector('.sku-input').value,
+        qty: row.querySelector('.qty-input').value,
+        unitPrice: row.querySelector('.price-input').value,
+      });
+    });
+
+    showLoader(true);
+    setButtonLoading(true);
+    showStatus('Submitting changes to be saved...', 'info'); // User-friendly message
+
+    // Critical: Call the Async Wrapper function (RENAMED to match V0)
+    google.script.run
+        .withSuccessHandler(onSaveSuccess)
+        .withFailureHandler(onFailure)
+        .savePoCorrections_AppendOnly(currentPo.poNumber, basicInfo, itemsToSave); 
+  }
+
+  function onSaveSuccess(response) {
+    showLoader(false);
+    setButtonLoading(false);
+    
+    if (response.success) {
+      // Message from backend: "Your PO changes have been submitted for processing..."
+      showStatus(response.message, 'success');
+      
+      // Hide details and reset selection
+      document.getElementById('details-section').classList.add('d-none');
+      document.getElementById('po-select').value = "";
+
+      // Close after a brief delay for user to read the success message
+      setTimeout(() => {
+          google.script.host.close();
+      }, 2000); // Delay 2 seconds
+      
+    } else {
+      // Handle immediate submission failure (e.g., authorization, cache error)
+      showStatus('Submission Failed: ' + response.message, 'danger');
+    }
+  }
+
+  function onFailure(error) {
+    showLoader(false);
+    setButtonLoading(false);
+    showStatus('An Unexpected Error Occurred: ' + error.message, 'danger');
+  }
+
+  function setButtonLoading(isLoading) {
+    const btn = document.getElementById('save-btn');
+    btn.disabled = isLoading;
+    btn.innerHTML = isLoading ? '<span class="spinner-border spinner-border-sm"></span> Saving in Background...' : 'Save Changes (Run in Background)';
+  }
+
+  function showLoader(isLoading) {
+    document.getElementById('loader').classList.toggle('d-none', !isLoading);
+  }
+
+  function showStatus(message, type) {
+    const statusDiv = document.getElementById('status');
+    statusDiv.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+  }
+</script>
+</body>
+</html>

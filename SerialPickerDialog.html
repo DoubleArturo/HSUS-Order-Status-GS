@@ -1,0 +1,264 @@
+<!-- <!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { 
+        font-family: Arial, sans-serif; 
+        margin: 15px; 
+        color: #333; 
+        background-color: #f8f9fa; 
+    }
+    h3 { 
+        color: #202124; 
+        margin-top: 0; 
+        margin-bottom: 20px; 
+        font-size: 1.3em; 
+        border-bottom: 2px solid #1a73e8; 
+        padding-bottom: 5px;
+    }
+    .status-container { 
+        display: flex; 
+        flex-direction: column; 
+        gap: 15px; 
+        max-height: calc(100vh - 80px); /* 確保側邊欄不會超出視窗 */
+        overflow-y: auto;
+    }
+    .list-section { 
+        padding: 15px; 
+        border: 1px solid #dadce0; 
+        border-radius: 4px; 
+        background-color: #fff; 
+        flex-shrink: 0;
+    }
+    .list-section h4 { 
+        color: #1a73e8; 
+        margin-top: 0; 
+        margin-bottom: 10px; 
+        border-bottom: 1px solid #f0f0f0; 
+        padding-bottom: 5px; 
+        font-size: 1.1em;
+    }
+    .po-list { 
+        max-height: 200px; 
+        overflow-y: auto; 
+        list-style: none; 
+        padding: 0; 
+        margin: 0; 
+        border: 1px solid #eee; 
+        border-radius: 4px;
+    }
+    .po-sku-item { 
+        display: flex; 
+        align-items: center; 
+        justify-content: space-between; 
+        padding: 8px 10px; 
+        border-bottom: 1px dotted #e0e0e0; 
+        transition: background-color 0.2s;
+    }
+    .po-sku-item:hover {
+        background-color: #f6f6f6;
+    }
+    .po-sku-item:last-child { border-bottom: none; }
+    .po-sku-info { 
+        flex-grow: 1; 
+        cursor: pointer; 
+        padding-right: 10px;
+    }
+    .po-sku-key { 
+        font-weight: bold; 
+        font-size: 0.9em;
+        display: block;
+    }
+    .po-sku-key .model-name {
+        font-weight: normal;
+        color: #70757a;
+        font-size: 0.9em;
+    }
+    .complete-checkbox-container { 
+        flex-shrink: 0; 
+        display: flex;
+        align-items: center;
+    }
+    .complete-checkbox-container label {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+    }
+    .complete-checkbox-container input[type="checkbox"] { 
+        transform: scale(1.2); 
+        cursor: pointer; 
+        margin: 0;
+    }
+    .loading-message { 
+        text-align: center; 
+        padding: 20px; 
+        color: #70757a; 
+    }
+    .error-message { 
+        color: #d93025; 
+        text-align: center; 
+        margin-top: 10px; 
+        font-weight: bold;
+    }
+    .message-area { 
+        margin-top: 10px; 
+        font-weight: bold; 
+        text-align: center; 
+    }
+    .success { color: #34a853; }
+    .failure { color: #d93025; }
+    .timestamp { font-size: 0.7em; color: #70757a; margin-left: 5px; }
+  </style>
+</head>
+<body>
+  <h3>📦 序號分配管理工具</h3>
+  
+  <div class="status-container">
+    <div class="list-section">
+      <h4>📅 待處理清單 (Pending)</h4>
+      <div id="pendingList" class="po-list">
+        <div class="loading-message">載入中...</div>
+      </div>
+    </div>
+    <div class="list-section">
+      <h4>✅ 已完成清單 (Finished)</h4>
+      <div id="finishedList" class="po-list">
+        <div class="loading-message">載入中...</div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="error-message" id="errorMessage"></div>
+  <div class="message-area" id="statusMessage"></div>
+  
+  <script>
+    const pendingList = document.getElementById('pendingList');
+    const finishedList = document.getElementById('finishedList');
+    const statusMessage = document.getElementById('statusMessage');
+    const errorMessage = document.getElementById('errorMessage');
+
+    document.addEventListener('DOMContentLoaded', loadLists);
+
+    /**
+     * 從 Apps Script 載入待處理和已完成的 PO/SKU 列表
+     */
+    function loadLists() {
+      pendingList.innerHTML = '<div class="loading-message">載入中...</div>';
+      finishedList.innerHTML = '<div class="loading-message">載入中...</div>';
+      statusMessage.textContent = '';
+      errorMessage.textContent = '';
+
+      google.script.run
+        .withSuccessHandler(renderLists)
+        .withFailureHandler(function(error) {
+          errorMessage.textContent = '載入列表失敗: ' + error.message;
+          pendingList.innerHTML = '<div class="loading-message">載入錯誤</div>';
+          finishedList.innerHTML = '<div class="loading-message">載入錯誤</div>';
+        })
+        .getPoSkuLists();
+    }
+
+    /**
+     * 渲染列表內容
+     * @param {Object} data - { pending: Array<Object>, finished: Array<Object> }
+     */
+    function renderLists(data) {
+      renderList(pendingList, data.pending, false);
+      renderList(finishedList, data.finished, true);
+      
+      if (data.pending.length === 0 && data.finished.length === 0) {
+        statusMessage.className = 'message-area';
+        statusMessage.textContent = '資料庫中沒有待處理或已完成的 PO/SKU 項目。';
+      }
+    }
+
+    /**
+     * 輔助函式：渲染單一列表
+     */
+    function renderList(container, items, isFinished) {
+      container.innerHTML = '';
+      if (items.length === 0) {
+        container.innerHTML = `<div class="loading-message">${isFinished ? '尚無已完成項目' : '尚無待處理項目'}</div>`;
+        return;
+      }
+
+      items.forEach(item => {
+        const listItem = document.createElement('div');
+        listItem.className = 'po-sku-item';
+        
+        // 提取 Model Name
+        const [poSkuKey, modelNameWithParens] = item.display.split(' ');
+        const modelName = modelNameWithParens ? modelNameWithParens.replace(/[()]/g, '') : '';
+        
+        // 顯示資訊 (Display Name)
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'po-sku-info';
+        infoDiv.innerHTML = `
+            <span class="po-sku-key">${poSkuKey}</span>
+            <span class="po-sku-key model-name">${modelName}</span>
+        `;
+        
+        // 如果是已完成清單，顯示時間戳
+        if (isFinished && item.timestamp && item.timestamp.getFullYear() > 1970) {
+             const timeStr = item.timestamp.toLocaleDateString() + ' ' + item.timestamp.toLocaleTimeString();
+             infoDiv.innerHTML += `<span class="timestamp"> | ${timeStr}</span>`;
+        }
+        
+        // 勾選框
+        const checkboxDiv = document.createElement('div');
+        checkboxDiv.className = 'complete-checkbox-container';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = item.isComplete;
+        checkbox.dataset.key = item.key; // 將原始 key 儲存到 data 屬性
+
+        checkboxDiv.appendChild(checkbox);
+        listItem.appendChild(infoDiv);
+        listItem.appendChild(checkboxDiv);
+        container.appendChild(listItem);
+        
+        // 註冊事件監聽器
+        checkbox.addEventListener('change', handleCompletionChange);
+        
+        // 點擊文字區域時，可以切換到 Serial Picker 介面 (這裡只做訊息提示)
+        infoDiv.addEventListener('click', () => {
+             statusMessage.className = 'message-area';
+             statusMessage.textContent = `欲編輯 ${item.key} 的序號，請呼叫對應的 Serial Picker 介面。`;
+        });
+      });
+    }
+
+    /**
+     * 處理勾選框變更事件 (Mark as Complete / Re-open)
+     */
+    function handleCompletionChange(e) {
+      const checkbox = e.target;
+      const poSkuKey = checkbox.dataset.key;
+      const isComplete = checkbox.checked;
+      
+      errorMessage.textContent = '';
+      statusMessage.className = 'message-area';
+      statusMessage.textContent = `處理中: ${poSkuKey} ...`;
+      checkbox.disabled = true; // 鎖定操作
+
+      google.script.run
+        .withSuccessHandler(function(response) {
+          checkbox.disabled = false;
+          statusMessage.className = 'message-area success';
+          statusMessage.textContent = response.message;
+          // 重新載入列表以更新分組 (從 Pending 到 Finished 或相反)
+          loadLists(); 
+        })
+        .withFailureHandler(function(error) {
+          checkbox.checked = !isComplete; // 恢復狀態
+          checkbox.disabled = false;
+          errorMessage.textContent = '狀態更新失敗: ' + error.message;
+          statusMessage.className = 'message-area failure';
+          statusMessage.textContent = `更新失敗: ${poSkuKey} 狀態已恢復!`;
+        })
+        .updateAssignmentCompletionStatus(poSkuKey, isComplete);
+    }
+  </script>
+</body>
+</html> -->

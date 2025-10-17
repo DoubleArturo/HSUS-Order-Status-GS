@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { padding: 1rem; }
+    .loader {
+      border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #3498db;
+      width: 24px; height: 24px; animation: spin 1s linear infinite;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .bol-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #eee; }
+    .assigned-serials { font-size: 0.8em; color: #6c757d; }
+    #serial-picker-modal .modal-body { max-height: 400px; overflow-y: auto; }
+    .status-badge { font-size: 0.9em; font-weight: bold; }
+    .status-used { color: #fd7e14; }
+    .status-available { color: #198754; }
+    .status-non-inbound { color: #6c757d; }
+    .status-not-found { color: #dc3545; }
+
+    /* STYLES FOR CUSTOM DROPDOWN */
+    .custom-dropdown-menu {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .custom-dropdown-menu .search-box-wrapper {
+      position: sticky;
+      top: 0;
+      background-color: white;
+      padding: 0.5rem;
+      z-index: 10;
+    }
+    .dropdown-item {
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="container-fluid">
+    <h4>Serial Assignment Tool</h4>
+
+    <div id="assignment-sections">
+      <div class="mb-3">
+        <label for="pending-dropdown-btn" class="form-label"><b>Step 1:</b> Select Pending PO|SKU</label>
+        <div class="dropdown w-100">
+          <button class="btn btn-light border w-100 text-start d-flex justify-content-between align-items-center" type="button" id="pending-dropdown-btn" data-bs-toggle="dropdown" aria-expanded="false">
+            <span>Loading...</span>
+          </button>
+          <div class="dropdown-menu w-100 custom-dropdown-menu" id="pending-dropdown-menu"></div>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label for="finished-dropdown-btn" class="form-label">Edit Finished Assignments</label>
+        <div class="dropdown w-100">
+          <button class="btn btn-light border w-100 text-start d-flex justify-content-between align-items-center" type="button" id="finished-dropdown-btn" data-bs-toggle="dropdown" aria-expanded="false">
+            <span>Loading...</span>
+          </button>
+          <div class="dropdown-menu w-100 custom-dropdown-menu" id="finished-dropdown-menu"></div>
+        </div>
+      </div>
+    </div>
+
+    <hr>
+    <div class="mb-3">
+      <h5 class="mb-3">Check Serial Status</h5>
+      <label for="serial-search-input" class="form-label">Enter Serial Number</label>
+      <div class="input-group">
+        <input type="text" id="serial-search-input" class="form-control" placeholder="e.g., S-12345">
+        <button id="serial-search-btn" class="btn btn-outline-secondary">Search</button>
+      </div>
+      <div id="serial-status-result" class="mt-2 p-2 border rounded" style="min-height: 100px; background-color: #f8f9fa;"></div>
+    </div>
+    <hr>
+
+    <div id="step2" class="d-none">
+      <label class="form-label"><b>Step 2:</b> Assign Serials for each BOL</label>
+      <div id="bol-list-container" class="list-group"></div>
+    </div>
+    
+    <div id="action-buttons" class="mt-4 d-none">
+       <button id="save-button" class="btn btn-primary w-100 mb-2">Save/Update Assignment</button>
+       <button id="finish-button" class="btn btn-success w-100 mb-2">Mark as Complete</button>
+       <button id="reopen-button" class="btn btn-warning w-100 mb-2">Re-open Assignment</button>
+    </div>
+
+    <div id="loader-container" class="text-center mt-3 d-none">
+      <div class="loader d-inline-block"></div>
+    </div>
+    <div id="status-message" class="mt-3"></div>
+  </div>
+
+  <div class="modal fade" id="serial-picker-modal" tabindex="-1"></div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    let currentPoSku = '';
+    let availableSerials = [];
+    let assignments = {};
+    let currentModalContext = {};
+
+    document.addEventListener('DOMContentLoaded', () => {
+      loadInitialData();
+      
+      document.getElementById('save-button').addEventListener('click', handleSave);
+      document.getElementById('finish-button').addEventListener('click', handleFinish);
+      document.getElementById('reopen-button').addEventListener('click', handleReopen);
+      
+      document.getElementById('serial-search-btn').addEventListener('click', handleSerialSearch);
+      document.getElementById('serial-search-input').addEventListener('keyup', (e) => { if (e.key === 'Enter') handleSerialSearch(); });
+    });
+
+    function loadInitialData() {
+      showLoader(true);
+      google.script.run
+        .withSuccessHandler(lists => {
+          populatePoSkuDropdowns(lists);
+          showLoader(false);
+        })
+        .withFailureHandler(showError)
+        .getPoSkuLists();
+    }
+
+    function populatePoSkuDropdowns({ pending, finished }) {
+      const setupDropdown = (btnId, menuId, placeholder, list, type) => {
+        const btn = document.getElementById(btnId).querySelector('span');
+        const menu = document.getElementById(menuId);
+        btn.textContent = placeholder;
+        menu.innerHTML = '';
+
+        const searchWrapper = document.createElement('div');
+        searchWrapper.className = 'search-box-wrapper';
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'form-control';
+        searchInput.placeholder = `Search ${type} items...`;
+        searchInput.addEventListener('keyup', () => filterCustomDropdown(searchInput, menu));
+        searchInput.addEventListener('click', (e) => e.stopPropagation());
+        searchWrapper.appendChild(searchInput);
+        menu.appendChild(searchWrapper);
+
+        if (list.length > 0) {
+          list.forEach(item => {
+            const a = document.createElement('a');
+            a.className = 'dropdown-item';
+            a.textContent = item;
+            a.addEventListener('click', () => handleDropdownSelect(item, type));
+            menu.appendChild(a);
+          });
+        } else {
+          const disabledItem = document.createElement('span');
+          disabledItem.className = 'dropdown-item text-muted';
+          disabledItem.textContent = `No ${type} items`;
+          menu.appendChild(disabledItem);
+        }
+      };
+      
+      setupDropdown('pending-dropdown-btn', 'pending-dropdown-menu', 'Select a pending item...', pending, 'pending');
+      setupDropdown('finished-dropdown-btn', 'finished-dropdown-menu', 'Select a finished item to edit...', finished, 'finished');
+    }
+
+    function handleDropdownSelect(value, type) {
+      if (type === 'pending') {
+        document.getElementById('pending-dropdown-btn').querySelector('span').textContent = value;
+        document.getElementById('finished-dropdown-btn').querySelector('span').textContent = 'Select a finished item to edit...';
+      } else {
+        document.getElementById('finished-dropdown-btn').querySelector('span').textContent = value;
+        document.getElementById('pending-dropdown-btn').querySelector('span').textContent = 'Select a pending item...';
+      }
+      handlePoSkuSelect(value, type);
+    }
+
+    /** MODIFIED: Now fetches assigned serials for BOTH pending and finished types */
+    async function handlePoSkuSelect(poSkuValue, type) {
+      currentPoSku = poSkuValue;
+      if (!currentPoSku) return;
+
+      resetAssignmentState();
+      const sku = currentPoSku.split('|')[1];
+      showLoader(true);
+
+      try {
+        const bolsPromise = new Promise((res, rej) => google.script.run.withSuccessHandler(res).withFailureHandler(rej).getBolsForPoSku(currentPoSku));
+        const serialsForPickerPromise = new Promise((res, rej) => google.script.run.withSuccessHandler(res).withFailureHandler(rej).getSerialsForEditing(sku, currentPoSku));
+        const assignedSerialsPromise = new Promise((res, rej) => google.script.run.withSuccessHandler(res).withFailureHandler(rej).getAssignedSerialsForPoSku(currentPoSku));
+
+        const [bols, serialsForPicker, assignedSerials] = await Promise.all([bolsPromise, serialsForPickerPromise, assignedSerialsPromise]);
+        
+        availableSerials = serialsForPicker;
+        assignments = assignedSerials;
+
+        populateBolList(bols);
+        updateBolListWithAssignments(); // Always update UI with any existing assignments
+
+        showLoader(false);
+        document.getElementById('step2').classList.remove('d-none');
+        document.getElementById('action-buttons').classList.remove('d-none');
+        toggleActionButtons(type);
+
+      } catch (error) {
+        showError(error);
+      }
+    }
+    
+    function handleSave() {
+      showLoader(true);
+      const dataToSave = { poSkuKey: currentPoSku, assignments };
+      google.script.run
+        .withSuccessHandler(response => {
+            showLoader(false);
+            if (response.success) {
+                showStatus(response.message, 'success');
+            } else {
+                showError(response.message);
+            }
+        })
+        .withFailureHandler(showError)
+        .assignSerials(dataToSave);
+    }
+
+    function handleFinish() {
+        if (!confirm(`Are you sure you want to mark "${currentPoSku}" as complete?`)) return;
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(response => {
+                if (response.success) {
+                    showStatus(response.message, 'success');
+                    resetFullView();
+                    loadInitialData();
+                } else {
+                    showError(response.message);
+                }
+            })
+            .withFailureHandler(showError)
+            .markAssignmentAsFinished(currentPoSku);
+    }
+
+    function handleReopen() {
+        if (!confirm(`Are you sure you want to re-open "${currentPoSku}"?`)) return;
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(response => {
+                if (response.success) {
+                    showStatus(response.message, 'success');
+                    resetFullView();
+                    loadInitialData();
+                } else {
+                    showError(response.message);
+                }
+            })
+            .withFailureHandler(showError)
+            .reopenAssignment(currentPoSku);
+    }
+
+    function resetAssignmentState() {
+      assignments = {};
+      document.getElementById('step2').classList.add('d-none');
+      document.getElementById('action-buttons').classList.add('d-none');
+      document.getElementById('status-message').innerHTML = '';
+      document.getElementById('status-message').className = '';
+    }
+    
+    function resetFullView() {
+        resetAssignmentState();
+        document.getElementById('pending-dropdown-btn').querySelector('span').textContent = 'Select a pending item...';
+        document.getElementById('finished-dropdown-btn').querySelector('span').textContent = 'Select a finished item to edit...';
+        currentPoSku = '';
+    }
+
+    function toggleActionButtons(type) {
+        const isPending = type === 'pending';
+        document.getElementById('save-button').style.display = 'block';
+        document.getElementById('finish-button').style.display = isPending ? 'block' : 'none';
+        document.getElementById('reopen-button').style.display = isPending ? 'none' : 'block';
+    }
+    
+    function filterCustomDropdown(input, menu) {
+        const filter = input.value.toUpperCase();
+        const items = menu.getElementsByTagName('a');
+        for (let i = 0; i < items.length; i++) {
+            const txtValue = items[i].textContent || items[i].innerText;
+            if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                items[i].style.display = "";
+            } else {
+                items[i].style.display = "none";
+            }
+        }
+    }
+
+    function updateBolListWithAssignments() {
+        for (const bolNumber in assignments) {
+            const selectedSerials = assignments[bolNumber];
+            const displayDiv = document.getElementById(`serials-for-${bolNumber}`);
+            if (displayDiv && selectedSerials.length > 0) {
+                displayDiv.textContent = `Assigned: ${selectedSerials.join(', ')}`;
+                displayDiv.classList.remove('text-muted');
+                displayDiv.classList.add('text-success');
+            }
+        }
+    }
+
+    function showLoader(isLoading) {
+      document.getElementById('loader-container').classList.toggle('d-none', !isLoading);
+    }
+    function showStatus(message, type) {
+      const statusDiv = document.getElementById('status-message');
+      statusDiv.className = `alert alert-${type} mt-3`;
+      statusDiv.textContent = message;
+    }
+    function showError(error) {
+      showLoader(false);
+      const message = typeof error === 'object' ? error.message : error;
+      showStatus(message, 'danger');
+    }
+    function populateBolList(bols) {
+      const container = document.getElementById('bol-list-container');
+      container.innerHTML = '';
+      if (bols.length === 0) {
+        container.innerHTML = '<div class="list-group-item">No BOL records found for this PO|SKU.</div>';
+        return;
+      }
+      bols.forEach(bol => {
+        const item = document.createElement('div');
+        item.className = 'list-group-item bol-item';
+        item.innerHTML = `
+          <div>
+            <strong>${bol.bolNumber}</strong> (Shipped Qty: ${bol.shippedQty})
+            <div class="assigned-serials" id="serials-for-${bol.bolNumber}">No serials assigned yet.</div>
+          </div>
+          <button class="btn btn-outline-primary btn-sm">Select Serials</button>
+        `;
+        const selectBtn = item.querySelector('button');
+        selectBtn.addEventListener('click', () => openSerialPicker(bol.bolNumber, bol.shippedQty, selectBtn));
+        container.appendChild(item);
+      });
+    }
+    
+    function openSerialPicker(bolNumber, shippedQty, btnElement) {
+        currentModalContext = { bolNumber, shippedQty, btnElement };
+        const modalEl = document.getElementById('serial-picker-modal');
+        if (!modalEl.innerHTML.trim()) {
+            modalEl.innerHTML = `
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="modal-title"></h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body" id="modal-body-content">
+                            <div class="mb-3 sticky-top bg-white pt-2 pb-2">
+                                <label for="serial-picker-search" class="form-label small">Paste serials separated by comma, space, or new line</label>
+                                <textarea id="serial-picker-search" class="form-control" rows="3" placeholder="Paste serials here..."></textarea>
+                                <button id="auto-select-btn" class="btn btn-link btn-sm p-0 mt-1">Auto-select matching items</button>
+                            </div>
+                            <div id="serial-checkbox-list"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" class="btn btn-primary" id="confirm-selection-btn-modal">Confirm Selection</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.getElementById('confirm-selection-btn-modal').addEventListener('click', handleConfirmSelection);
+        }
+
+        const modal = new bootstrap.Modal(modalEl);
+        document.getElementById('modal-title').textContent = `Select up to ${shippedQty} Serials for ${bolNumber}`;
+        const currentlyAssignedToThisBol = assignments[bolNumber] || [];
+        const serialsForPicker = [...new Set([...availableSerials, ...currentlyAssignedToThisBol])];
+        
+        renderSerialCheckboxes(serialsForPicker);
+        
+        const searchInput = document.getElementById('serial-picker-search');
+        searchInput.value = '';
+        searchInput.oninput = () => {
+            const searchTerms = searchInput.value.split(/[,\s\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+            const filtered = searchTerms.length === 0 ? serialsForPicker : serialsForPicker.filter(s => searchTerms.some(term => s.toLowerCase().includes(term)));
+            renderSerialCheckboxes(filtered);
+        };
+        document.getElementById('auto-select-btn').onclick = () => {
+            const { shippedQty } = currentModalContext;
+            const visibleCheckboxes = document.querySelectorAll('#serial-checkbox-list .serial-checkbox');
+            if (visibleCheckboxes.length > shippedQty) {
+                alert(`Filtered items (${visibleCheckboxes.length}) exceed the limit of ${shippedQty}.`);
+                return;
+            }
+            visibleCheckboxes.forEach(cb => { cb.checked = true; });
+        };
+        modal.show();
+    }
+    
+    function renderSerialCheckboxes(serials) {
+        const { bolNumber } = currentModalContext;
+        const listContainer = document.getElementById('serial-checkbox-list');
+        listContainer.innerHTML = '';
+        const currentlyAssignedToThisBol = assignments[bolNumber] || [];
+        if (serials.length === 0) {
+            listContainer.innerHTML = '<p class="text-center text-muted">No matching serials found.</p>';
+            return;
+        }
+        serials.forEach(serial => {
+            const isChecked = currentlyAssignedToThisBol.includes(serial);
+            listContainer.innerHTML += `
+                <div class="form-check">
+                    <input class="form-check-input serial-checkbox" type="checkbox" value="${serial}" id="chk-${serial}" ${isChecked ? 'checked' : ''}>
+                    <label class="form-check-label" for="chk-${serial}">${serial}</label>
+                </div>
+            `;
+        });
+        listContainer.removeEventListener('change', checkSelectionLimit);
+        listContainer.addEventListener('change', checkSelectionLimit);
+    }
+    
+    function checkSelectionLimit(e) {
+        const { shippedQty } = currentModalContext;
+        if(e.target.classList.contains('serial-checkbox')) {
+            const checkedCount = document.querySelectorAll('#serial-checkbox-list .serial-checkbox:checked').length;
+            if (checkedCount > shippedQty) {
+                alert(`You can only select up to ${shippedQty} serial numbers.`);
+                e.target.checked = false;
+            }
+        }
+    }
+
+    function handleConfirmSelection() {
+        const { bolNumber } = currentModalContext;
+        const selectedCheckboxes = document.querySelectorAll('#serial-checkbox-list .serial-checkbox:checked');
+        const selectedSerials = Array.from(selectedCheckboxes).map(cb => cb.value);
+        assignments[bolNumber] = selectedSerials;
+        updateBolListWithAssignments();
+        const modalInstance = bootstrap.Modal.getInstance(document.getElementById('serial-picker-modal'));
+        if (modalInstance) {
+            modalInstance.hide();
+        }
+    }
+    
+    function handleSerialSearch() {
+      const serialInput = document.getElementById('serial-search-input');
+      const serialNumber = serialInput.value.trim();
+      if (!serialNumber) return;
+      const searchBtn = document.getElementById('serial-search-btn');
+      const resultDiv = document.getElementById('serial-status-result');
+      searchBtn.disabled = true;
+      searchBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+      resultDiv.innerHTML = 'Searching...';
+      google.script.run
+        .withSuccessHandler(displaySerialStatus)
+        .withFailureHandler(error => {
+            showError(error);
+            displaySerialStatus({ status: 'Error', message: error.message });
+        })
+        .getSerialStatus(serialNumber);
+    }
+
+    function displaySerialStatus(result) {
+        const resultDiv = document.getElementById('serial-status-result');
+        const searchBtn = document.getElementById('serial-search-btn');
+        searchBtn.disabled = false;
+        searchBtn.innerHTML = 'Search';
+        let content = '';
+        let statusClass = '';
+        switch(result.status) {
+            case 'Used': statusClass = 'status-used'; break;
+            case 'Available': statusClass = 'status-available'; break;
+            case 'Non-Inbound': statusClass = 'status-non-inbound'; break;
+            default: statusClass = 'status-not-found'; break;
+        }
+        content = `<strong>Status:</strong> <span class="status-badge ${statusClass}">${result.status}</span><br>`;
+        if (result.status === 'Used') {
+            content += `<strong>PO#/Quote#:</strong> ${result.poQuote}<br>`;
+            content += `<strong>BOL#:</strong> ${result.bol}<br>`;
+            content += `<strong>Date:</strong> ${result.date}`;
+        } else if (result.status === 'Not Found') {
+            content = `<div class="${statusClass}">Serial number not found in the database.</div>`;
+        } else if (result.status === 'Error') {
+             content = `<div class="status-not-found">Error: ${result.message}</div>`;
+        }
+        resultDiv.innerHTML = content;
+    }
+  </script>
+</body>
+</html>

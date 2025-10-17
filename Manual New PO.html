@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
+    <style>
+      .loading-spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .line-item-container {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1fr auto;
+        gap: 0.5rem;
+        align-items: center;
+      }
+      .line-item-header {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1fr auto;
+        gap: 0.5rem;
+        align-items: center;
+        padding-bottom: 0.5rem;
+        margin-bottom: 0.5rem;
+        border-bottom: 1px solid #e5e7eb;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-50 p-4 font-sans text-gray-800 flex flex-col h-full">
+    <div class="flex-grow overflow-y-auto">
+      <h1 class="text-xl font-bold mb-4 text-gray-800">Manual New PO</h1>
+      
+      <div id="loading" class="text-center py-8">
+        <div class="loading-spinner mx-auto mb-2"></div>
+        <p>Loading data...</p>
+      </div>
+
+      <div id="form-container" class="space-y-6 hidden">
+        <form id="po-form" class="space-y-6">
+          <!-- PO Info Section -->
+          <div class="bg-white p-4 rounded-lg shadow-md">
+            <h2 class="text-lg font-semibold mb-3 border-b pb-1">PO Info</h2>
+            <div>
+              <label for="po-number" class="block text-sm font-medium text-gray-700 mb-1">P/O #:</label>
+              <input type="text" id="po-number" class="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 shadow-sm focus:outline-none" readonly>
+            </div>
+            <div>
+              <label for="created-date" class="block text-sm font-medium text-gray-700 mt-3 mb-1">Created Date:</label>
+              <input type="text" id="created-date" class="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 shadow-sm focus:outline-none" readonly>
+            </div>
+            <div>
+              <label for="buyer-name" class="block text-sm font-medium text-gray-700 mt-3 mb-1">Buyer Name:</label>
+              <select id="buyer-name" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">-- Select --</option>
+              </select>
+            </div>
+            <div>
+              <label for="payment-term" class="block text-sm font-medium text-gray-700 mt-3 mb-1">Payment Term:</label>
+              <select id="payment-term" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="Net 30">Net 30</option>
+                <option value="Net 60">Net 60</option>
+              </select>
+            </div>
+            <div>
+              <label for="type" class="block text-sm font-medium text-gray-700 mt-3 mb-1">Type:</label>
+              <select id="type" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="Direct Sales">Direct Sales</option>
+                <option value="Dealer">Dealer</option>
+              </select>
+            </div>
+          </div>
+          
+          <!-- Line Items Section -->
+          <div class="bg-white p-4 rounded-lg shadow-md">
+            <h2 class="text-lg font-semibold mb-3 border-b pb-1">Line Items</h2>
+            <div class="line-item-header">
+              <span class="text-sm font-semibold text-gray-700">Model</span>
+              <span class="text-sm font-semibold text-gray-700">QTY</span>
+              <span class="text-sm font-semibold text-gray-700">Unit Price</span>
+              <span class="text-sm font-semibold text-gray-700">Subtotal</span>
+              <span></span>
+            </div>
+            <div id="line-items-container" class="space-y-2">
+              <!-- Line item templates will be added here -->
+            </div>
+            <button type="button" id="add-line-item-button" class="w-full mt-4 bg-green-500 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-600 transition duration-300">
+              Add Item
+            </button>
+            <div class="mt-4 pt-2 border-t-2 border-gray-200 text-right">
+              <span class="text-lg font-bold text-gray-900">Total:</span>
+              <span id="total-amount" class="text-lg font-bold text-gray-900 ml-2">$0.00</span>
+            </div>
+          </div>
+          
+          <!-- Ship to Info Section -->
+          <div class="bg-white p-4 rounded-lg shadow-md">
+            <h2 class="text-lg font-semibold mb-3 border-b pb-1">Ship to Info</h2>
+            <div>
+              <label for="address" class="block text-sm font-medium text-gray-700 mb-1">Address:</label>
+              <textarea id="address" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+            </div>
+            <div>
+              <label for="contact-person" class="block text-sm font-medium text-gray-700 mt-3 mb-1">Contact Person:</label>
+              <input type="text" id="contact-person" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="phone" class="block text-sm font-medium text-gray-700 mt-3 mb-1">Phone:</label>
+              <input type="text" id="phone" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="email" class="block text-sm font-medium text-gray-700 mt-3 mb-1">Email:</label>
+              <input type="email" id="email" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div id="status-message" class="mt-4 p-3 rounded-lg text-sm text-center hidden"></div>
+      
+    <div id="action-buttons" class="mt-auto pt-4 border-t-2 border-gray-200">
+      <button id="submit-button" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 transition duration-300">
+        Save & Submit
+      </button>
+    </div>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        const loadingDiv = document.getElementById('loading');
+        const formContainer = document.getElementById('form-container');
+        const poForm = document.getElementById('po-form');
+        const poNumberInput = document.getElementById('po-number');
+        const createdDateInput = document.getElementById('created-date');
+        const buyerNameSelect = document.getElementById('buyer-name');
+        const paymentTermSelect = document.getElementById('payment-term');
+        const typeSelect = document.getElementById('type');
+        const lineItemsContainer = document.getElementById('line-items-container');
+        const addLineItemButton = document.getElementById('add-line-item-button');
+        const addressTextarea = document.getElementById('address');
+        const contactPersonInput = document.getElementById('contact-person');
+        const phoneInput = document.getElementById('phone');
+        const emailInput = document.getElementById('email');
+        const submitButton = document.getElementById('submit-button');
+        const statusMessageDiv = document.getElementById('status-message');
+        const totalAmountSpan = document.getElementById('total-amount');
+
+        let allModels = [];
+        let allPrices = {};
+
+        function showMessage(message, type) {
+          statusMessageDiv.textContent = message;
+          statusMessageDiv.className = `mt-4 p-3 rounded-lg text-sm text-center ${type === 'success' ? 'bg-green-100 text-green-800' : type === 'error' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`;
+          statusMessageDiv.style.display = 'block';
+        }
+
+        // Fetch initial data from Apps Script
+        google.script.run
+          .withSuccessHandler(function(data) {
+            loadingDiv.classList.add('hidden');
+            formContainer.classList.remove('hidden');
+
+            // Populate Buyer Name dropdown
+            data.customerNames.forEach(name => {
+              const option = document.createElement('option');
+              option.value = name;
+              option.textContent = name;
+              buyerNameSelect.appendChild(option);
+            });
+
+            // Store Model & Price data
+            allModels = data.models;
+            data.prices.forEach((price, index) => {
+                const model = data.models[index];
+                if (model) {
+                    allPrices[model] = price;
+                }
+            });
+
+            // Set default values
+            poNumberInput.value = data.poNumber;
+            createdDateInput.value = data.createdDate;
+            
+            // Add initial line item
+            addLineItem();
+          })
+          .withFailureHandler(function(error) {
+            loadingDiv.classList.add('hidden');
+            showMessage('Failed to load data: ' + error.message, 'error');
+          })
+          .getInitialData();
+
+        function calculateTotal() {
+            let total = 0;
+            const lineItems = Array.from(lineItemsContainer.querySelectorAll('.line-item-container'));
+            lineItems.forEach(itemDiv => {
+                const subtotalSpan = itemDiv.querySelector('.subtotal-amount');
+                if (subtotalSpan) {
+                    const subtotal = parseFloat(subtotalSpan.textContent.replace('$', ''));
+                    if (!isNaN(subtotal)) {
+                        total += subtotal;
+                    }
+                }
+            });
+            totalAmountSpan.textContent = `$${total.toFixed(2)}`;
+        }
+
+        function addLineItem() {
+          const itemDiv = document.createElement('div');
+          itemDiv.className = 'line-item-container';
+          itemDiv.innerHTML = `
+            <select class="model-select w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">-- Select Model --</option>
+              ${allModels.map(model => `<option value="${model}">${model}</option>`).join('')}
+            </select>
+            <input type="number" value="1" min="1" class="quantity-input w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <input type="number" class="unit-price-input w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value="0.00" step="0.01">
+            <span class="subtotal-amount text-sm font-semibold text-gray-700">$0.00</span>
+            <button type="button" class="remove-line-item-button text-red-500 hover:text-red-700 text-sm">Remove</button>
+          `;
+          lineItemsContainer.appendChild(itemDiv);
+
+          // Add event listeners for the new item
+          const modelSelect = itemDiv.querySelector('.model-select');
+          const quantityInput = itemDiv.querySelector('.quantity-input');
+          const unitPriceInput = itemDiv.querySelector('.unit-price-input');
+          const subtotalSpan = itemDiv.querySelector('.subtotal-amount');
+
+          function updateSubtotal() {
+              const qty = parseInt(quantityInput.value, 10) || 0;
+              const price = parseFloat(unitPriceInput.value) || 0;
+              const subtotal = qty * price;
+              subtotalSpan.textContent = `$${subtotal.toFixed(2)}`;
+              calculateTotal();
+          }
+
+          modelSelect.addEventListener('change', function() {
+            const selectedModel = this.value;
+            if (allPrices[selectedModel]) {
+              unitPriceInput.value = allPrices[selectedModel];
+            }
+            updateSubtotal();
+          });
+          quantityInput.addEventListener('input', updateSubtotal);
+          unitPriceInput.addEventListener('input', updateSubtotal);
+
+          itemDiv.querySelector('.remove-line-item-button').addEventListener('click', () => {
+            if (lineItemsContainer.children.length > 1) {
+                itemDiv.remove();
+                calculateTotal();
+            } else {
+                showMessage('You must keep at least one line item.', 'error');
+            }
+          });
+          calculateTotal();
+        }
+
+        addLineItemButton.addEventListener('click', addLineItem);
+
+        submitButton.addEventListener('click', function() {
+          const poNumber = poNumberInput.value;
+          const createdDate = createdDateInput.value;
+          const buyerName = buyerNameSelect.value;
+          const paymentTerm = paymentTermSelect.value;
+          const type = typeSelect.value;
+          const total = parseFloat(totalAmountSpan.textContent.replace('$', '')) || 0;
+          
+          const lineItems = Array.from(lineItemsContainer.children).map(itemDiv => ({
+            model: itemDiv.querySelector('.model-select').value,
+            quantity: parseInt(itemDiv.querySelector('.quantity-input').value, 10),
+            unitPrice: parseFloat(itemDiv.querySelector('.unit-price-input').value.replace(/[^0-9.-]+/g,""))
+          }));
+
+          const shipToInfo = {
+            address: addressTextarea.value,
+            contactPerson: contactPersonInput.value,
+            phone: phoneInput.value,
+            email: emailInput.value
+          };
+
+          if (!poNumber || !buyerName || lineItems.length === 0 || !shipToInfo.address || total === 0) {
+            showMessage('Please fill in all the required fields and ensure the total is greater than 0.', 'error');
+            return;
+          }
+          
+          // Validate line items
+          const hasInvalidLineItem = lineItems.some(item => !item.model || isNaN(item.quantity) || item.quantity <= 0 || isNaN(item.unitPrice));
+          if (hasInvalidLineItem) {
+            showMessage('Please ensure all line items have a selected model, a quantity greater than 0, and a valid unit price.', 'error');
+            return;
+          }
+
+          submitButton.disabled = true;
+          submitButton.textContent = 'Processing...';
+
+          google.script.run
+            .withSuccessHandler(function(response) {
+              showMessage(response.message, response.status);
+              submitButton.disabled = false;
+              submitButton.textContent = 'Save & Submit';
+              // Reload form for next entry
+              poForm.reset();
+              lineItemsContainer.innerHTML = '';
+              addLineItem();
+              poNumberInput.value = `POM${Utilities.getUuid().substring(0, 4).toUpperCase()}`;
+              createdDateInput.value = new Date().toISOString().split('T')[0];
+            })
+            .withFailureHandler(function(error) {
+              showMessage('Failed: ' + error.message, 'error');
+              submitButton.disabled = false;
+              submitButton.textContent = 'Save & Submit';
+            })
+            .processAndSavePo({
+              poNumber,
+              createdDate,
+              buyerName,
+              paymentTerm,
+              type,
+              lineItems,
+              shipToInfo,
+              total
+            });
+        });
+      });
+    </script>
+  </body>
+</html>

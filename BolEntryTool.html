@@ -1,0 +1,362 @@
+<!-- VERSION 10 - Improved Tom Select styling -->
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+  <style>
+    body { padding: 1rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .form-label { font-weight: 500; }
+    #status-message { margin-top: 1rem; }
+    .bol-entry { 
+      border: 1px solid #dee2e6; 
+      border-radius: 0.375rem; 
+      padding: 1rem; 
+      margin-bottom: 1rem; 
+      position: relative; 
+      background-color: #f8f9fa;
+    }
+    .remove-bol-btn { 
+      position: absolute; 
+      top: 0.5rem; 
+      right: 0.5rem; 
+      padding: 0.25rem 0.5rem; 
+    }
+    .loader { 
+      border: 4px solid #f3f3f3; 
+      border-radius: 50%; 
+      border-top: 4px solid #0d6efd; 
+      width: 24px; 
+      height: 24px; 
+      animation: spin 1.5s linear infinite; 
+      margin-top: 1rem; 
+    }
+    @keyframes spin { 
+      0% { transform: rotate(0deg); } 
+      100% { transform: rotate(360deg); } 
+    }
+    h4, h5 { color: #212529; }
+    
+    /* [V10 修改] Tom Select 樣式微調，使其更美觀且與 Bootstrap 整合 */
+    .ts-wrapper {
+      width: 100%; /* 確保 wrapper 佔滿容器寬度 */
+    }
+    .ts-control {
+      padding: 0.375rem 0.75rem !important; /* 模擬 Bootstrap form-control 的 padding */
+      font-size: 1rem; /* 模擬 Bootstrap form-control 的字體大小 */
+      line-height: 1.5; /* 模擬 Bootstrap form-control 的行高 */
+      width: 100%; /* 確保輸入框本身也佔滿寬度 */
+    }
+    .ts-dropdown {
+      width: 100%; /* 確保下拉選單也佔滿寬度 */
+    }
+    .ts-control .ts-placeholder {
+      color: #6c757d; /* 調整 placeholder 顏色 */
+    }
+  </style>
+</head>
+<body>
+  <div class="container-fluid">
+    <h4>BOL Entry Tool (Step 2)</h4>
+    <p class="text-muted">Select an item to create or edit Bill of Lading (BOL) records.</p>
+
+    <div class="mb-3">
+      <label for="po-sku-select" class="form-label">Pending Items</label>
+      <select id="po-sku-select" placeholder="Search pending items..."></select>
+    </div>
+    
+    <hr class="my-4">
+
+    <div id="fulfilled-section" class="mb-3">
+        <label for="fulfilled-po-sku-select" class="form-label">Edit Fulfilled Items</label>
+        <select id="fulfilled-po-sku-select" placeholder="Search fulfilled items..."></select>
+    </div>
+
+    <div id="details-section" class="d-none">
+      <hr class="my-4">
+      <h5 id="editing-header">Editing: </h5>
+      <form id="bol-form">
+        <div class="mb-3">
+            <label for="act-ship-date" class="form-label">Actual Ship Date</label>
+            <input type="date" id="act-ship-date" class="form-control" required>
+        </div>
+        <div id="bol-entries-container"></div>
+        <button type="button" id="add-bol-btn" class="btn btn-outline-secondary btn-sm mb-3">
+          <i class="bi bi-plus-circle"></i> Add Another BOL
+        </button>
+        <div class="mb-3 text-end">
+            <h5>Total Shipping Fee: $<span id="total-fee">0.00</span></h5>
+        </div>
+        <div class="form-check form-switch mb-4">
+          <input class="form-check-input" type="checkbox" role="switch" id="fulfill-shipment-check">
+          <label class="form-check-label" for="fulfill-shipment-check">Mark as Full Shipment</label>
+        </div>
+        <button type="submit" id="submit-btn" class="btn btn-primary w-100 mt-2">
+          <i class="bi bi-check-circle-fill"></i> Save BOL Records
+        </button>
+      </form>
+    </div>
+
+    <div id="loader" class="loader d-none mx-auto"></div>
+    <div id="status-message"></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+<script>
+  let currentSelection = null;
+  let pendingSelect, fulfilledSelect;
+
+  document.addEventListener("DOMContentLoaded", function() {
+    showLoader(true);
+    google.script.run.withSuccessHandler(onInitialDataLoaded).withFailureHandler(onFailure).getInitialBolData();
+    
+    document.getElementById('bol-form').addEventListener('submit', handleFormSubmit);
+    document.getElementById('add-bol-btn').addEventListener('click', () => addBolEntry());
+
+    const bolContainer = document.getElementById('bol-entries-container');
+    bolContainer.addEventListener('input', (event) => {
+      if (event.target.classList.contains('shipping-fee-input')) {
+        updateTotalFee();
+      }
+    });
+    bolContainer.addEventListener('click', (event) => {
+      const removeButton = event.target.closest('.remove-bol-btn');
+      if (removeButton) {
+        if (bolContainer.children.length > 1) {
+          removeButton.closest('.bol-entry').remove();
+          updateTotalFee();
+          renumberBolEntries();
+        } else {
+          showStatus("At least one BOL entry is required.", "warning");
+        }
+      }
+    });
+  });
+
+  // 位於 BolEntryTool.html <script> 區塊內
+
+function onInitialDataLoaded(data) {
+    showLoader(false);
+    console.log('FRONTEND CHECKPOINT 1: onInitialDataLoaded triggered. Data received:', data);
+
+    // 1. 處理失敗情況
+    if (!data.success) {
+      // 使用更安全的錯誤處理，避免不必要的底層 API 呼叫
+      const errorMessage = data.message || 'Server returned an unsuccessful status.';
+      showStatus(errorMessage, 'danger');
+      console.error('FRONTEND ERROR: Initial data loading failed. Message:', data.message);
+      return;
+    }
+    
+    // 2. 數據結構檢查 (強化健壯性)
+    if (!Array.isArray(data.pendingList) || !Array.isArray(data.fulfilledList)) {
+        showStatus('Error: Invalid data format received from server.', 'danger');
+        console.error('FRONTEND ERROR: Data structure invalid. Expected arrays for lists.');
+        return;
+    }
+
+    console.log(`FRONTEND CHECKPOINT 2: Data structure confirmed. Pending: ${data.pendingList.length} items, Fulfilled: ${data.fulfilledList.length} items.`);
+
+    // 3. 填充下拉選單 (這裡涉及 TomSelect 初始化，是最可能觸發限制的地方)
+    try {
+        populatePendingDropdown(data.pendingList);
+        console.log('FRONTEND CHECKPOINT 3a: populatePendingDropdown finished.');
+
+        populateFulfilledDropdown(data.fulfilledList);
+        console.log('FRONTEND CHECKPOINT 3b: populateFulfilledDropdown finished.');
+        
+    } catch (e) {
+        // 如果在填充 (TomSelect) 過程中出錯，捕獲並記錄
+        console.error('FRONTEND ERROR: Failed to populate dropdowns (TomSelect issue).', e);
+        showStatus('Error during UI initialization: ' + e.message, 'danger');
+    }
+
+    console.log('FRONTEND CHECKPOINT 4: onInitialDataLoaded completed successfully.');
+}
+  
+  function populatePendingDropdown(list) {
+    if (pendingSelect) pendingSelect.destroy();
+    const selectEl = document.getElementById('po-sku-select');
+    
+    pendingSelect = new TomSelect(selectEl, {
+      options: list.map(item => ({ value: item, text: item })),
+      maxOptions: 200,
+      placeholder: "Search or select a pending item...",
+      allowEmptyOption: true,
+      onChange: value => {
+        if (value) {
+          loadItemForEditing(value);
+          if (fulfilledSelect) fulfilledSelect.setValue('', true);
+        }
+      }
+    });
+  }
+
+  function populateFulfilledDropdown(list) {
+    if (fulfilledSelect) fulfilledSelect.destroy();
+    const selectEl = document.getElementById('fulfilled-po-sku-select');
+
+    fulfilledSelect = new TomSelect(selectEl, {
+      options: list.map(item => ({ value: item.key, text: item.key })),
+      maxOptions: 200,
+      placeholder: "Search or select a fulfilled item...",
+      allowEmptyOption: true,
+      onChange: value => {
+        if (value) {
+          loadItemForEditing(value);
+          if (pendingSelect) pendingSelect.setValue('', true);
+        }
+      }
+    });
+  }
+
+
+  function loadItemForEditing(poSkuKey) {
+    if (!poSkuKey) {
+      document.getElementById('details-section').classList.add('d-none');
+      return;
+    }
+    currentSelection = poSkuKey;
+    
+    showLoader(true);
+    document.getElementById('details-section').classList.add('d-none');
+    google.script.run
+      .withSuccessHandler(onExistingDataReceived)
+      .withFailureHandler(onFailure)
+      .getExistingBolData(poSkuKey);
+  }
+
+  function onExistingDataReceived(data) {
+    showLoader(false);
+    if (!data.success) {
+      onFailure(data);
+      return;
+    }
+    document.getElementById('editing-header').textContent = `Editing: ${currentSelection}`;
+    document.getElementById('act-ship-date').value = data.actShipDate || new Date().toISOString().split('T')[0];
+    document.getElementById('fulfill-shipment-check').checked = data.isFulfilled;
+    
+    const container = document.getElementById('bol-entries-container');
+    container.innerHTML = '';
+
+    if (data.bols && data.bols.length > 0) {
+      data.bols.forEach(bol => addBolEntry(bol));
+    } else {
+      addBolEntry();
+    }
+    updateTotalFee();
+    document.getElementById('details-section').classList.remove('d-none');
+  }
+
+  function addBolEntry(bol = {}) {
+    const container = document.getElementById('bol-entries-container');
+    const entryIndex = container.children.length;
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'bol-entry';
+    const isSigned = bol.signed === true;
+    entryDiv.innerHTML = `
+      <button type="button" class="btn-close remove-bol-btn" aria-label="Close"></button>
+      <div class="row g-3">
+        <div class="col-md-12"><label class="form-label bol-label">BOL #${entryIndex + 1}</label><input type="text" class="form-control bol-number-input" placeholder="Enter BOL number" value="${bol.bolNumber || ''}" required></div>
+        <div class="col-6"><label class="form-label">Shipped Qty</label><input type="number" class="form-control shipped-qty-input" min="1" value="${bol.shippedQty || ''}" required></div>
+        <div class="col-6"><label class="form-label">Shipping Fee</label><input type="number" class="form-control shipping-fee-input" min="0" step="0.01" value="${bol.shippingFee || 0}"></div>
+        <div class="col-12"><div class="form-check mt-2"><input class="form-check-input signed-bol-checkbox" type="checkbox" id="signed-bol-${entryIndex}" ${isSigned ? 'checked' : ''}><label class="form-check-label" for="signed-bol-${entryIndex}">Signed BOL Received?</label></div></div>
+      </div>
+    `;
+    container.appendChild(entryDiv);
+    renumberBolEntries();
+  }
+  
+  function updateTotalFee() {
+    const feeInputs = document.querySelectorAll('.shipping-fee-input');
+    let total = 0;
+    feeInputs.forEach(input => { total += parseFloat(input.value) || 0; });
+    document.getElementById('total-fee').textContent = total.toFixed(2);
+  }
+
+  function renumberBolEntries() {
+    const allEntries = document.querySelectorAll('.bol-label');
+    allEntries.forEach((label, index) => { label.textContent = `BOL #${index + 1}`; });
+  }
+
+  function handleFormSubmit(event) {
+    event.preventDefault();
+    showLoader(true);
+    showStatus('Saving...', 'info');
+    document.getElementById('submit-btn').disabled = true;
+
+    const bolEntries = document.querySelectorAll('.bol-entry');
+    const bolsData = Array.from(bolEntries).map(entry => ({
+      bolNumber: entry.querySelector('.bol-number-input').value,
+      shippedQty: entry.querySelector('.shipped-qty-input').value,
+      shippingFee: entry.querySelector('.shipping-fee-input').value,
+      signed: entry.querySelector('.signed-bol-checkbox').checked,
+    }));
+
+    const formData = {
+      poSkuKey: currentSelection,
+      actShipDate: document.getElementById('act-ship-date').value,
+      isFulfilled: document.getElementById('fulfill-shipment-check').checked,
+      bols: bolsData
+    };
+    google.script.run.withSuccessHandler(onSaveSuccess).withFailureHandler(onFailure).saveBolData(formData);
+  }
+
+  function onSaveSuccess(response) {
+    document.getElementById('submit-btn').disabled = false;
+    showLoader(false);
+    if (response.success) {
+      showStatus(response.message, 'success');
+      document.getElementById('details-section').classList.add('d-none');
+      currentSelection = null;
+      if (pendingSelect) pendingSelect.clear();
+      if (fulfilledSelect) fulfilledSelect.clear();
+      google.script.run.withSuccessHandler(onInitialDataLoaded).withFailureHandler(onFailure).getInitialBolData();
+    } else {
+      showStatus(response.message, 'danger');
+    }
+  }
+
+  // 新程式碼：更簡潔、更安全的錯誤處理
+function onFailure(error) {
+  showLoader(false);
+  document.getElementById('submit-btn').disabled = false;
+  
+  // 核心改動：嘗試安全地獲取錯誤訊息，並使用一個簡潔的替代方案
+  let errorMessage = 'An unexpected error occurred.'; // 預設錯誤
+  
+  if (typeof error === 'object' && error !== null) {
+      // 如果 error 是一個物件，嘗試獲取其 message
+      errorMessage = error.message || 'Server execution failed.';
+  } else if (typeof error === 'string') {
+      // 如果 error 是一個字串
+      errorMessage = error;
+  }
+  
+  showStatus('Error: ' + errorMessage, 'danger', 10000); // 延長顯示時間
+  console.error(error);
+}
+  
+  function showStatus(message, type = 'info', duration = 5000) {
+    const statusDiv = document.getElementById('status-message');
+    statusDiv.textContent = message;
+    statusDiv.className = `alert alert-${type} mt-3`;
+    if (type !== 'danger') {
+      setTimeout(() => {
+        if (statusDiv.textContent === message) {
+          statusDiv.className = '';
+          statusDiv.textContent = '';
+        }
+      }, duration);
+    }
+  }
+
+  function showLoader(isLoading) {
+    document.getElementById('loader').style.display = isLoading ? 'block' : 'none';
+  }
+</script>
+</body>
+</html>

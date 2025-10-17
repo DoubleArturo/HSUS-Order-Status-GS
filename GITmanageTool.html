@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+  <style>
+    body { padding: 1rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .form-label { font-weight: 500; }
+    #status-message { margin-top: 1rem; }
+    .loader { 
+      border: 4px solid #f3f3f3; 
+      border-radius: 50%; 
+      border-top: 4px solid #0d6efd; 
+      width: 24px; 
+      height: 24px; 
+      animation: spin 1.5s linear infinite; 
+      margin-top: 1rem; 
+    }
+    @keyframes spin { 
+      0% { transform: rotate(0deg); } 
+      100% { transform: rotate(360deg); } 
+    }
+    h4 { color: #212529; }
+    .ts-wrapper { width: 100%; }
+    .ts-control { padding: 0.375rem 0.75rem !important; font-size: 1rem; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="container-fluid">
+    <h4>GIT Progress Editor</h4>
+    <p class="text-muted">Select a P/I Number to edit its shipping progress.</p>
+
+    <div class="mb-3">
+      <label for="pi-select" class="form-label">P/I Number</label>
+      <select id="pi-select" placeholder="Search or select a P/I..."></select>
+    </div>
+
+    <div id="details-section" class="d-none">
+      <hr class="my-4">
+      <h5 id="editing-header">Editing: </h5>
+      <form id="git-form">
+        <div class="row g-3">
+          <div class="col-md-6 mb-2">
+            <label for="etc-date" class="form-label">ETC</label>
+            <input type="date" id="etc-date" class="form-control">
+          </div>
+          <div class="col-md-6 mb-2">
+            <label for="etd-date" class="form-label">ETD</label>
+            <input type="date" id="etd-date" class="form-control">
+          </div>
+          <div class="col-md-6 mb-2">
+            <label for="eta-date" class="form-label">ETA</label>
+            <input type="date" id="eta-date" class="form-control">
+          </div>
+          <div class="col-md-6 mb-2">
+            <label for="inbound-date" class="form-label">Inbound Date</label>
+            <input type="date" id="inbound-date" class="form-control">
+          </div>
+          <div class="col-12 mb-2">
+            <label for="memo-text" class="form-label">Memo</label>
+            <textarea id="memo-text" class="form-control" rows="3"></textarea>
+          </div>
+        </div>
+        
+        <div class="form-check form-switch my-4">
+          <input class="form-check-input" type="checkbox" role="switch" id="finish-check">
+          <label class="form-check-label" for="finish-check">Mark as Finish</label>
+        </div>
+        
+        <button type="submit" id="submit-btn" class="btn btn-primary w-100 mt-2">
+          <i class="bi bi-check-circle-fill"></i> Save Changes
+        </button>
+      </form>
+    </div>
+
+    <div id="loader" class="loader d-none mx-auto"></div>
+    <div id="status-message"></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+<script>
+  let currentSelection = null;
+  let piSelect;
+
+  document.addEventListener("DOMContentLoaded", function() {
+    showLoader(true);
+    google.script.run.withSuccessHandler(onDataReceived).withFailureHandler(onFailure).getGitData();
+    
+    document.getElementById('git-form').addEventListener('submit', handleFormSubmit);
+  });
+
+  function onDataReceived(data) {
+    showLoader(false);
+    if (!data.success) {
+      showStatus(data.message, 'danger');
+      return;
+    }
+    populatePiDropdown(data.piList);
+  }
+  
+  function populatePiDropdown(list) {
+    if (piSelect) piSelect.destroy();
+    const selectEl = document.getElementById('pi-select');
+    
+    piSelect = new TomSelect(selectEl, {
+      options: list.map(item => ({ value: item, text: item })),
+      placeholder: "Search or select a P/I...",
+      allowEmptyOption: true,
+      onChange: value => {
+        loadPiDetails(value);
+      }
+    });
+  }
+
+  function loadPiDetails(piNumber) {
+    const detailsSection = document.getElementById('details-section');
+    if (!piNumber) {
+      detailsSection.classList.add('d-none');
+      currentSelection = null;
+      return;
+    }
+    currentSelection = piNumber;
+    
+    showLoader(true);
+    detailsSection.classList.add('d-none');
+    google.script.run
+      .withSuccessHandler(onDetailsReceived)
+      .withFailureHandler(onFailure)
+      .getPiDetails(piNumber);
+  }
+
+  function onDetailsReceived(data) {
+    showLoader(false);
+    if (!data.success) {
+      onFailure(data);
+      return;
+    }
+    document.getElementById('editing-header').textContent = `Editing: ${currentSelection}`;
+    
+    const details = data.details;
+    document.getElementById('etc-date').value = details.etc || '';
+    document.getElementById('etd-date').value = details.etd || '';
+    document.getElementById('eta-date').value = details.eta || '';
+    document.getElementById('inbound-date').value = details.inboundDate || '';
+    document.getElementById('memo-text').value = details.memo || '';
+    document.getElementById('finish-check').checked = details.isFinished;
+    
+    document.getElementById('details-section').classList.remove('d-none');
+  }
+
+  function handleFormSubmit(event) {
+    event.preventDefault();
+    showLoader(true);
+    showStatus('Saving...', 'info');
+    document.getElementById('submit-btn').disabled = true;
+
+    const formData = {
+      piNumber: currentSelection,
+      etc: document.getElementById('etc-date').value,
+      etd: document.getElementById('etd-date').value,
+      eta: document.getElementById('eta-date').value,
+      inboundDate: document.getElementById('inbound-date').value,
+      memo: document.getElementById('memo-text').value,
+      isFinished: document.getElementById('finish-check').checked,
+    };
+    google.script.run.withSuccessHandler(onSaveSuccess).withFailureHandler(onFailure).saveGitDetails(formData);
+  }
+
+  function onSaveSuccess(response) {
+    document.getElementById('submit-btn').disabled = false;
+    showLoader(false);
+    if (response.success) {
+      showStatus(response.message, 'success');
+      document.getElementById('details-section').classList.add('d-none');
+      currentSelection = null;
+      
+      // 重新載入下拉選單，已完成的項目會自動消失
+      showLoader(true);
+      piSelect.clear();
+      google.script.run.withSuccessHandler(onDataReceived).withFailureHandler(onFailure).getGitData();
+    } else {
+      showStatus(response.message, 'danger');
+    }
+  }
+
+  function onFailure(error) {
+    showLoader(false);
+    document.getElementById('submit-btn').disabled = false;
+    showStatus('Error: ' + (error.message || 'An unknown error occurred.'), 'danger');
+    console.error(error);
+  }
+  
+  function showStatus(message, type = 'info', duration = 5000) {
+    const statusDiv = document.getElementById('status-message');
+    statusDiv.textContent = message;
+    statusDiv.className = `alert alert-${type} mt-3`;
+    if (type !== 'danger') {
+      setTimeout(() => {
+        if (statusDiv.textContent === message) {
+          statusDiv.className = '';
+          statusDiv.textContent = '';
+        }
+      }, duration);
+    }
+  }
+
+  function showLoader(isLoading) {
+    document.getElementById('loader').style.display = isLoading ? 'block' : 'none';
+  }
+</script>
+</body>
+</html>
