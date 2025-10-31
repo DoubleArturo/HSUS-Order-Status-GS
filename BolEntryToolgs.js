@@ -1,16 +1,18 @@
 /**
  * @fileoverview Backend server-side script for the BOL Entry Tool.
- * Handles creating/updating multiple BOL records and managing shipment fulfillment status.
- * [VERSION 9 - Split Caching Optimization]
+ * [VERSION 10.1 - SERIALIZATION FIX]
+ * - Implements Google Query Language for high-speed data retrieval (方案 3).
+ * - Fixes faulty cache logic (方案 2).
+ * - Includes manual cache clearing tool (方案 1).
+ * - ⚡️ FIX: Removes non-serializable gviz Date object from the 'fulfilledList' return
+ * payload, which was causing google.script.run to fail silently.
  */
 
 // --- 常數定義區 ---
 const BOL_SHEET_NAME = 'BOL_DB';
 const PLANNING_SHEET_NAME = 'Shipment_Planning_DB';
-// [V9 修改] 使用分離的快取鍵名
 const CACHE_KEY_PENDING = 'pendingBolData';
 const CACHE_KEY_FULFILLED = 'fulfilledBolData';
-
 
 /**
  * Opens the sidebar interface for the BOL Entry Tool.
@@ -23,22 +25,19 @@ function openBolEntryTool() {
 }
 
 /**
- * [已修改 V9] 獲取初始資料，採用分離式快取以提升效能。
+ * [已修改 V10.1] 獲取初始資料，修正序列化問題。
  * @returns {object} An object containing both pending and fulfilled lists.
  */
 function getInitialBolData() {
-  Logger.log('--- Starting getInitialBolData() ---'); // 檢查點 A: 函式開始執行
+  Logger.log('--- Starting getInitialBolData() [V10.1 - Serialization Fix] ---'); 
 
   try {
     const cache = CacheService.getScriptCache();
-    
-    // 檢查點 B: 檢查快取
     const cachedPending = cache.get(CACHE_KEY_PENDING);
     const cachedFulfilled = cache.get(CACHE_KEY_FULFILLED);
-    Logger.log('CHECKPOINT B: Cache checked. Pending status: ' + (cachedPending != null) + ', Fulfilled status: ' + (cachedFulfilled != null));
+    Logger.log('CHECKPOINT B: Cache checked. Pending: ' + (cachedPending != null) + ', Fulfilled: ' + (cachedFulfilled != null));
 
-    // 如果兩個快取都存在，直接從快取回傳資料
-    if (cachedPending != null && cachedFulfilled != null) {
+    if (cachedPending != null && cachedPending !== "[]" && cachedFulfilled != null && cachedFulfilled !== "[]") {
       Logger.log('CHECKPOINT C: Returning data from cache.');
       return {
         success: true,
@@ -47,71 +46,78 @@ function getInitialBolData() {
       };
     }
     
-    // 檢查點 D: 讀取試算表資料
-    Logger.log('CHECKPOINT D: Cache miss. Reading from spreadsheet.');
+    Logger.log('CHECKPOINT D: Cache miss. Running high-speed Query.');
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const planningSheet = ss.getSheetByName(PLANNING_SHEET_NAME);
     if (!planningSheet) throw new Error(`Sheet '${PLANNING_SHEET_NAME}' not found.`);
-    
-    const lastRow = planningSheet.getLastRow();
-    if (lastRow < 2) {
-      Logger.log('INFO: Sheet is empty, returning empty lists.');
-      return { success: true, pendingList: [], fulfilledList: [] };
-    }
 
-    // 仍使用 getRange('A2:G' + lastRow) 以確保讀取完整資料範圍
-    const dataRange = planningSheet.getRange('A2:G' + lastRow);
-    const planningData = dataRange.getValues();
-    
-    const pendingList = [];
-    const fulfilledList = [];
+    // 查詢 1: 獲取所有 "未完成" (G 欄 != 'Fulfilled' 或為空) 的、唯一的 PO_SKU_Key (C 欄)，並排序
+    const pendingQuery = "SELECT C WHERE C IS NOT NULL AND (G != 'Fulfilled' OR G IS NULL) GROUP BY C ORDER BY C ASC";
+    const pendingRows = _runQuery(planningSheet, pendingQuery);
+    const uniquePendingList = pendingRows.map(row => row[0]); // [key1, key2]
 
-    // 檢查點 E: 處理資料
-    Logger.log('CHECKPOINT E: Processing ' + planningData.length + ' rows.');
+    // 查詢 2: 獲取所有 "已完成" (G 欄 = 'Fulfilled') 的 PO_SKU_Key (C 欄) 和最新的時間戳 (A 欄)
+    const fulfilledQuery = "SELECT C, MAX(A) WHERE C IS NOT NULL AND G = 'Fulfilled' GROUP BY C ORDER BY MAX(A) DESC";
+    const fulfilledRows = _runQuery(planningSheet, fulfilledQuery);
     
-    planningData.forEach(row => {
-      const timestamp = row[0]; // Column A
-      const key = row[2];       // Column C
-      const status = row[6];    // Column G
-
-      if (key) {
-        if (status === 'Fulfilled') {
-          fulfilledList.push({ key: key, timestamp: timestamp });
-        } else {
-          pendingList.push(key);
-        }
-      }
+    // --- 🚀 [V10.1 關鍵修正] ---
+    // 我們只回傳 `key`。
+    // `row[1]` (時間戳) 是一個 gviz Date 物件，它會導致 google.script.run 序列化失敗。
+    // 前端 HTML 只需要 `item.key`，排序已由 Query 完成。
+    const fulfilledList = fulfilledRows.map(row => {
+      return { 
+        key: row[0] // PO_SKU_Key
+        // 我們刻意不回傳 row[1] (時間戳)
+      }; 
     });
-    
-    fulfilledList.sort((a, b) => {
-      const dateA = a.timestamp ? new Date(a.timestamp) : new Date(0);
-      const dateB = b.timestamp ? new Date(b.timestamp) : new Date(0);
-      return dateB - dateA;
-    });
+    // --- [修正結束] ---
 
-    const uniquePendingList = [...new Set(pendingList)].sort();
-
-    // 檢查點 F: 寫入快取
-    Logger.log('CHECKPOINT F: Writing results back to cache.');
-    cache.put(CACHE_KEY_PENDING, JSON.stringify(uniquePendingList), 300);
+    Logger.log('CHECKPOINT F: Writing query results back to cache.');
+    cache.put(CACHE_KEY_PENDING, JSON.stringify(uniquePendingList), 300); // 快取 5 分鐘
     cache.put(CACHE_KEY_FULFILLED, JSON.stringify(fulfilledList), 300);
 
-    Logger.log('CHECKPOINT G: Successfully returning fresh data.');
+    Logger.log('CHECKPOINT G: Successfully returning fresh data from Query.');
     return { 
       success: true, 
       pendingList: uniquePendingList,
       fulfilledList: fulfilledList
     };
   } catch (e) {
-    // 檢查點 H: 錯誤捕獲
-    Logger.log(`ERROR H: getInitialBolData Error: ${e.message}`);
+    Logger.log(`ERROR H: getInitialBolData Error: ${e.message}\n${e.stack}`);
     return { success: false, message: e.toString() };
   }
 }
 
+/**
+ * [方案 3 輔助函式] 執行 Google Visualization API 查詢。
+ * (此函數保持不變)
+ */
+function _runQuery(sheet, query) {
+  const sheetId = sheet.getParent().getId();
+  const sheetGid = sheet.getSheetId();
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?gid=${sheetGid}&tq=${encodeURIComponent(query)}`;
+  
+  const response = UrlFetchApp.fetch(url, {
+    headers: { 'Authorization': 'Bearer ' + ScriptApp.getOAuthToken() }
+  });
+  
+  const text = response.getContentText();
+  const jsonText = text.replace(/google.visualization.Query.setResponse\((.*)\);/, '$1');
+  const json = JSON.parse(jsonText);
+  
+  if (json.status === 'error') {
+    throw new Error(`Query failed: ${json.errors.map(e => e.detailed_message).join(', ')}`);
+  }
+  
+  return json.table.rows.map(row => {
+    return row.c.map(cell => (cell ? cell.v : null)); // .v 是原始值
+  });
+}
+
 
 /**
- * [已修改 V8] 獲取已存在的 BOL 數據，並修正欄位索引錯誤。
+ * 獲取已存在的 BOL 數據。
+ * (此函數保持不變)
  */
 function getExistingBolData(poSkuKey) {
   try {
@@ -126,7 +132,7 @@ function getExistingBolData(poSkuKey) {
     let actShipDate = null;
 
     data.forEach(row => {
-      if (row[1] === poSkuKey) { // Column B is poSkuKey
+      if (row[1] === poSkuKey) { 
         if (!actShipDate && row[4] instanceof Date) {
           actShipDate = Utilities.formatDate(row[4], Session.getScriptTimeZone(), "yyyy-MM-dd");
         }
@@ -141,7 +147,6 @@ function getExistingBolData(poSkuKey) {
 
     const planningSheet = ss.getSheetByName(PLANNING_SHEET_NAME);
     const planningData = planningSheet.getRange('C2:G' + planningSheet.getLastRow()).getValues();
-    // [修正] 讀取範圍從 C 欄開始，所以 key 在索引 0，status 在索引 4
     const isFulfilled = planningData.some(row => row[0] === poSkuKey && row[4] === 'Fulfilled'); 
 
     return { success: true, bols: existingBols, actShipDate: actShipDate, isFulfilled: isFulfilled };
@@ -152,9 +157,8 @@ function getExistingBolData(poSkuKey) {
 }
 
 /**
- * [已修改 V9] 儲存 BOL 數據，並在成功後清除相關的分離式快取。
- * @param {object} data The data object from the frontend form.
- * @returns {object} A result object.
+ * 儲存 BOL 數據。
+ * (此函數保持不變)
  */
 function saveBolData(data) {
   try {
@@ -203,7 +207,6 @@ function saveBolData(data) {
     
     SpreadsheetApp.flush();
 
-    // [V9 修改] 成功儲存後，清除相關的快取
     const cache = CacheService.getScriptCache();
     cache.remove(CACHE_KEY_PENDING);
     cache.remove(CACHE_KEY_FULFILLED);
@@ -216,10 +219,8 @@ function saveBolData(data) {
 }
 
 /**
- * 更新 Planning 表的狀態 (G欄) 和時間戳記 (A欄)。
- * @param {string} keyToUpdate The PO|SKU key to find and update.
- * @param {string} status The new status to set.
- * @param {Date} timestamp The timestamp of the change.
+ * 更新 Planning 表的狀態。
+ * (此函數保持不變)
  */
 function updateFulfillmentStatus(keyToUpdate, status, timestamp) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -238,4 +239,20 @@ function updateFulfillmentStatus(keyToUpdate, status, timestamp) {
       break; 
     }
   }
+}
+
+/**
+ * [方案 1 - 手動執行] 強制清除 BOL Entry Tool 的快取
+ * (此函數保持不變，供您使用)
+ */
+function clearBolCache_Manual() {
+  const cache = CacheService.getScriptCache();
+  cache.remove('pendingBolData');
+  cache.remove('fulfilledBolData');
+  SpreadsheetApp.getUi().alert(
+    'BOL Tool Cache Cleared!', 
+    'The cache for the BOL Entry Tool has been successfully cleared. Please close and re-open the tool.', 
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+  Logger.log('BOL Tool cache (pendingBolData, fulfilledBolData) has been manually cleared.');
 }
