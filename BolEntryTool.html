@@ -6,72 +6,34 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
   <style>
+    /* CSS 樣式保持不變 */
     body { padding: 1rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
     .form-label { font-weight: 500; }
     #status-message { margin-top: 1rem; }
-    .bol-entry { 
-      border: 1px solid #dee2e6; 
-      border-radius: 0.375rem; 
-      padding: 1rem; 
-      margin-bottom: 1rem; 
-      position: relative; 
-      background-color: #f8f9fa;
-    }
-    .remove-bol-btn { 
-      position: absolute; 
-      top: 0.5rem; 
-      right: 0.5rem; 
-      padding: 0.25rem 0.5rem; 
-    }
-    .loader { 
-      border: 4px solid #f3f3f3; 
-      border-radius: 50%; 
-      border-top: 4px solid #0d6efd; 
-      width: 24px; 
-      height: 24px; 
-      animation: spin 1.5s linear infinite; 
-      margin-top: 1rem; 
-    }
-    @keyframes spin { 
-      0% { transform: rotate(0deg); } 
-      100% { transform: rotate(360deg); } 
-    }
+    .bol-entry { border: 1px solid #dee2e6; border-radius: 0.375rem; padding: 1rem; margin-bottom: 1rem; position: relative; background-color: #f8f9fa; }
+    .remove-bol-btn { position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.5rem; }
+    .loader { border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #0d6efd; width: 24px; height: 24px; animation: spin 1.5s linear infinite; margin-top: 1rem; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     h4, h5 { color: #212529; }
-    
-    .ts-wrapper {
-      width: 100%; 
-    }
-    .ts-control {
-      padding: 0.375rem 0.75rem !important; 
-      font-size: 1rem; 
-      line-height: 1.5; 
-      width: 100%; 
-    }
-    .ts-dropdown {
-      width: 100%; 
-    }
-    .ts-control .ts-placeholder {
-      color: #6c757d; 
-    }
+    .ts-wrapper { width: 100%; }
+    .ts-control { padding: 0.375rem 0.75rem !important; font-size: 1rem; line-height: 1.5; }
+    .ts-dropdown { width: 100%; }
+    .ts-control .ts-placeholder { color: #6c757d; }
   </style>
 </head>
 <body>
   <div class="container-fluid">
     <h4>BOL Entry Tool (Step 2)</h4>
     <p class="text-muted">Select an item to create or edit Bill of Lading (BOL) records.</p>
-
     <div class="mb-3">
       <label for="po-sku-select" class="form-label">Pending Items</label>
       <select id="po-sku-select"></select>
     </div>
-    
     <hr class="my-4">
-
     <div id="fulfilled-section" class="mb-3">
         <label for="fulfilled-po-sku-select" class="form-label">Edit Fulfilled Items</label>
         <select id="fulfilled-po-sku-select"></select>
     </div>
-
     <div id="details-section" class="d-none">
       <hr class="my-4">
       <h5 id="editing-header">Editing: </h5>
@@ -96,7 +58,6 @@
         </button>
       </form>
     </div>
-
     <div id="loader" class="loader d-none mx-auto"></div>
     <div id="status-message"></div>
   </div>
@@ -106,78 +67,75 @@
 <script>
   let currentSelection = null;
   let pendingSelect, fulfilledSelect;
+  // --- 🚀 [V12 檢查點] ---
+  let watchdogTimer = null; // "看門狗" 計時器
 
   document.addEventListener("DOMContentLoaded", function() {
     showLoader(true);
+    console.log('[FRONTEND V12] DOM Loaded. Initializing TomSelect...');
 
-    // --- 🚀 [UI 修正] ---
-    // 立即初始化 Tom Select，並顯示 "Loading..."
     const commonSettings = {
       maxOptions: 200,
       allowEmptyOption: true,
-      placeholder: "Loading...", // <-- 滿足您的 "Loading" 需求
+      placeholder: "Select PO|MODEL...", 
     };
     
-    pendingSelect = new TomSelect('#po-sku-select', {
-      ...commonSettings,
-      onChange: value => {
-        if (value) {
-          loadItemForEditing(value);
-          if (fulfilledSelect) fulfilledSelect.setValue('', true);
-        }
-      }
-    });
+    pendingSelect = new TomSelect('#po-sku-select', { ...commonSettings, onChange: value => handleSelectChange(pendingSelect, fulfilledSelect, value) });
+    fulfilledSelect = new TomSelect('#fulfilled-po-sku-select', { ...commonSettings, onChange: value => handleSelectChange(fulfilledSelect, pendingSelect, value) });
     
-    fulfilledSelect = new TomSelect('#fulfilled-po-sku-select', {
-      ...commonSettings,
-      onChange: value => {
-        if (value) {
-          loadItemForEditing(value);
-          if (pendingSelect) pendingSelect.setValue('', true);
-        }
-      }
-    });
-    
-    // 在後端資料回來前，禁用下拉選單
     pendingSelect.disable();
     fulfilledSelect.disable();
-    // --- [UI 修正結束] ---
 
+    // --- 🚀 [V12 檢查點] ---
+    // 設定一個 15 秒的「看門狗」計時器
+    watchdogTimer = setTimeout(() => {
+      console.error('[FRONTEND V12] WATCHDOG TIMEOUT: 15 seconds passed. Backend is stuck or serialization failed.');
+      onFailure('TIMEOUT: The server took too long to respond. It might be stuck (Serialization Failure). Please check backend logs.');
+    }, 15000); // 15 秒
+
+    console.log('[FRONTEND V12] Calling google.script.run.getInitialBolData()...');
     google.script.run
         .withSuccessHandler(onInitialDataLoaded)
-        .withFailureHandler(onFailure) // onFailure 現在也會處理 UI
+        .withFailureHandler(onFailure) 
         .getInitialBolData();
     
+    // ... (其他事件監聽器保持不變) ...
     document.getElementById('bol-form').addEventListener('submit', handleFormSubmit);
     document.getElementById('add-bol-btn').addEventListener('click', () => addBolEntry());
-
-    // (其他事件監聽器保持不變)
     const bolContainer = document.getElementById('bol-entries-container');
-    bolContainer.addEventListener('input', (event) => {
-      if (event.target.classList.contains('shipping-fee-input')) {
-        updateTotalFee();
-      }
-    });
+    bolContainer.addEventListener('input', (event) => { if (event.target.classList.contains('shipping-fee-input')) updateTotalFee(); });
     bolContainer.addEventListener('click', (event) => {
       const removeButton = event.target.closest('.remove-bol-btn');
-      if (removeButton) {
-        if (bolContainer.children.length > 1) {
-          removeButton.closest('.bol-entry').remove();
-          updateTotalFee();
-          renumberBolEntries();
-        } else {
-          showStatus("At least one BOL entry is required.", "warning");
-        }
-      }
+      if (removeButton) { if (bolContainer.children.length > 1) { removeButton.closest('.bol-entry').remove(); updateTotalFee(); renumberBolEntries(); } else { showStatus("At least one BOL entry is required.", "warning"); } }
     });
   });
 
-  function onInitialDataLoaded(data) {
+  function handleSelectChange(primarySelect, secondarySelect, value) {
+    if (value) {
+      loadItemForEditing(value);
+      if (secondarySelect) secondarySelect.setValue('', true);
+    }
+  }
+
+  // BolEntryTool.html -> <script> tag
+
+  // BolEntryTool.html -> <script> tag
+
+  function onInitialDataLoaded(dataString) {
+    let data;
+    try {
+      data = JSON.parse(dataString);
+    } catch (e) {
+      onFailure('Failed to parse server response: ' + e.message);
+      return;
+    }
+
+    clearTimeout(watchdogTimer); 
+    console.log('[FRONTEND V12.5] SUCCESS: onInitialDataLoaded triggered. Parsed data object.');
     showLoader(false);
-    console.log('FRONTEND CHECKPOINT 1: onInitialDataLoaded triggered. Data received:', data);
 
     if (!data.success) {
-      onFailure(data.message || 'Server returned an unsuccessful status.'); // 轉交給 onFailure 處理
+      onFailure(data.message || 'Server returned an unsuccessful status.'); 
       return;
     }
     
@@ -186,70 +144,86 @@
         return;
     }
 
-    console.log(`FRONTEND CHECKPOINT 2: Data structure confirmed. Pending: ${data.pendingList.length} items, Fulfilled: ${data.fulfilledList.length} items.`);
+    console.log(`[FRONTEND V12.5] Data structure confirmed. Pending: ${data.pendingList.length} items, Fulfilled: ${data.fulfilledList.length} items.`);
 
-    // --- 🚀 [UI 修正] ---
-    // 不再建立新的 TomSelect，而是載入資料到已存在的實例中
     try {
-        // 載入 Pending
         pendingSelect.clearOptions();
         pendingSelect.addOptions(data.pendingList.map(item => ({ value: item, text: item })));
-        pendingSelect.setPlaceholder(data.pendingList.length > 0 ? "Search or select a pending item..." : "No pending items found");
+        
+        // --- 🚀 [V12.5 關鍵修正] ---
+        // 依照您的要求，將提示詞改為 "Select PO|Model"
+        pendingSelect.control.placeholder = (data.pendingList.length > 0 ? "Select PO|Model" : "No pending items found");
+        // --- [修正結束] ---
+        
         pendingSelect.enable();
-        console.log('FRONTEND CHECKPOINT 3a: populatePendingDropdown finished.');
+        console.log('[FRONTEND V12.5] Pending dropdown populated.');
 
-        // 載入 Fulfilled
         fulfilledSelect.clearOptions();
         fulfilledSelect.addOptions(data.fulfilledList.map(item => ({ value: item.key, text: item.key })));
-        fulfilledSelect.setPlaceholder(data.fulfilledList.length > 0 ? "Search or select a fulfilled item..." : "No fulfilled items found");
+        
+        // --- 🚀 [V12.5 關鍵修正] ---
+        // 依照您的要求，將提示詞改為 "Select PO|Model"
+        fulfilledSelect.control.placeholder = (data.fulfilledList.length > 0 ? "Select PO|Model" : "No fulfilled items found");
+        // --- [修正結束] ---
+
         fulfilledSelect.enable();
-        console.log('FRONTEND CHECKPOINT 3b: populateFulfilledDropdown finished.');
+        console.log('[FRONTEND V12.5] Fulfilled dropdown populated.');
         
     } catch (e) {
         onFailure(e.message || 'Error during UI initialization.');
     }
-    // --- [UI 修正結束] ---
-
-    console.log('FRONTEND CHECKPOINT 4: onInitialDataLoaded completed successfully.');
   }
 
-  // --- 🚀 [UI 修正] ---
-  // 刪除舊的 populatePendingDropdown 和 populateFulfilledDropdown 函數
-  // (它們的功能已合併到 onInitialDataLoaded)
-  
-  function loadItemForEditing(poSkuKey) {
-    if (!poSkuKey) {
-      document.getElementById('details-section').classList.add('d-none');
-      return;
-    }
-    currentSelection = poSkuKey;
+  function onFailure(error) {
+    clearTimeout(watchdogTimer); 
+    console.error('[FRONTEND V12.3] FAILURE: onFailure triggered.', error);
+    showLoader(false);
     
+    let errorMessage = 'An unexpected error occurred.';
+    if (typeof error === 'object' && error !== null) {
+        errorMessage = error.message || 'Server execution failed.';
+    } else if (typeof error === 'string') {
+        errorMessage = error;
+    }
+
+    const errorPlaceholder = 'Error: ' + errorMessage;
+    
+    // --- 🚀 [V12.3 關鍵修正] ---
+    // 這裡也必須修正，否則 onFailure 會自己產生錯誤
+    if (pendingSelect && pendingSelect.control) {
+        pendingSelect.clearOptions(); 
+        pendingSelect.control.placeholder = errorPlaceholder;
+        pendingSelect.enable(); 
+    }
+    if (fulfilledSelect && fulfilledSelect.control) {
+        fulfilledSelect.clearOptions();
+        fulfilledSelect.control.placeholder = errorPlaceholder;
+        fulfilledSelect.enable();
+    }
+    // --- [修正結束] ---
+    
+    showStatus('Error: ' + errorMessage, 'danger', 10000); 
+  }
+  
+  // --- (其餘所有 helper 函數保持不變) ---
+
+  function loadItemForEditing(poSkuKey) {
+    if (!poSkuKey) { document.getElementById('details-section').classList.add('d-none'); return; }
+    currentSelection = poSkuKey;
     showLoader(true);
     document.getElementById('details-section').classList.add('d-none');
-    google.script.run
-      .withSuccessHandler(onExistingDataReceived)
-      .withFailureHandler(onFailure)
-      .getExistingBolData(poSkuKey);
+    google.script.run.withSuccessHandler(onExistingDataReceived).withFailureHandler(onFailure).getExistingBolData(poSkuKey);
   }
 
   function onExistingDataReceived(data) {
     showLoader(false);
-    if (!data.success) {
-      onFailure(data);
-      return;
-    }
+    if (!data.success) { onFailure(data); return; }
     document.getElementById('editing-header').textContent = `Editing: ${currentSelection}`;
     document.getElementById('act-ship-date').value = data.actShipDate || new Date().toISOString().split('T')[0];
     document.getElementById('fulfill-shipment-check').checked = data.isFulfilled;
-    
     const container = document.getElementById('bol-entries-container');
     container.innerHTML = '';
-
-    if (data.bols && data.bols.length > 0) {
-      data.bols.forEach(bol => addBolEntry(bol));
-    } else {
-      addBolEntry();
-    }
+    if (data.bols && data.bols.length > 0) { data.bols.forEach(bol => addBolEntry(bol)); } else { addBolEntry(); }
     updateTotalFee();
     document.getElementById('details-section').classList.remove('d-none');
   }
@@ -290,7 +264,6 @@
     showLoader(true);
     showStatus('Saving...', 'info');
     document.getElementById('submit-btn').disabled = true;
-
     const bolEntries = document.querySelectorAll('.bol-entry');
     const bolsData = Array.from(bolEntries).map(entry => ({
       bolNumber: entry.querySelector('.bol-number-input').value,
@@ -298,7 +271,6 @@
       shippingFee: entry.querySelector('.shipping-fee-input').value,
       signed: entry.querySelector('.signed-bol-checkbox').checked,
     }));
-
     const formData = {
       poSkuKey: currentSelection,
       actShipDate: document.getElementById('act-ship-date').value,
@@ -317,46 +289,19 @@
       currentSelection = null;
       if (pendingSelect) pendingSelect.clear();
       if (fulfilledSelect) fulfilledSelect.clear();
-      
-      // 重新載入下拉選單 (會顯示 Loading...)
       pendingSelect.disable();
       fulfilledSelect.disable();
-      pendingSelect.setPlaceholder("Loading...");
-      fulfilledSelect.setPlaceholder("Loading...");
+      pendingSelect.setPlaceholder("Select PO|Model");
+      fulfilledSelect.setPlaceholder("Select PO|Model");
+      // 重新設定看門狗
+      watchdogTimer = setTimeout(() => {
+        console.error('[FRONTEND V12] WATCHDOG TIMEOUT (Reload): 15 seconds passed.');
+        onFailure('TIMEOUT: The server took too long to reload data.');
+      }, 15000);
       google.script.run.withSuccessHandler(onInitialDataLoaded).withFailureHandler(onFailure).getInitialBolData();
     } else {
       showStatus(response.message, 'danger');
     }
-  }
-
-  // --- 🚀 [UI 修正] ---
-  // 更新 onFailure 函數，以處理 TomSelect 的錯誤狀態
-  function onFailure(error) {
-    showLoader(false);
-    document.getElementById('submit-btn').disabled = false;
-    
-    let errorMessage = 'An unexpected error occurred.';
-    if (typeof error === 'object' && error !== null) {
-        errorMessage = error.message || 'Server execution failed.';
-    } else if (typeof error === 'string') {
-        errorMessage = error;
-    }
-
-    // 在 TomSelect 控制項中顯示錯誤
-    const errorPlaceholder = 'Error: ' + errorMessage;
-    if (pendingSelect) {
-        pendingSelect.clearOptions(); // 清除可能存在的舊選項
-        pendingSelect.setPlaceholder(errorPlaceholder);
-        pendingSelect.enable(); // 允許用戶點擊，即使是空的
-    }
-    if (fulfilledSelect) {
-        fulfilledSelect.clearOptions();
-        fulfilledSelect.setPlaceholder(errorPlaceholder);
-        fulfilledSelect.enable();
-    }
-    
-    showStatus('Error: ' + errorMessage, 'danger', 10000); // 延長顯示時間
-    console.error(error);
   }
   
   function showStatus(message, type = 'info', duration = 5000) {
