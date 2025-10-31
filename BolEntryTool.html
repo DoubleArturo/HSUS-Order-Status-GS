@@ -67,17 +67,18 @@
 <script>
   let currentSelection = null;
   let pendingSelect, fulfilledSelect;
-  // --- 🚀 [V12 檢查點] ---
   let watchdogTimer = null; // "看門狗" 計時器
 
   document.addEventListener("DOMContentLoaded", function() {
     showLoader(true);
-    console.log('[FRONTEND V12] DOM Loaded. Initializing TomSelect...');
+    console.log('[FRONTEND V12.5] DOM Loaded. Initializing TomSelect...');
 
     const commonSettings = {
       maxOptions: 200,
       allowEmptyOption: true,
-      placeholder: "Select PO|MODEL...", 
+      placeholder: "Loading...", // 初始 placeholder
+      // --- 🚀 [V12.5 新增] 允許 TomSelect 搜尋 PO|SKU 和 Model ---
+      searchField: ['text'], 
     };
     
     pendingSelect = new TomSelect('#po-sku-select', { ...commonSettings, onChange: value => handleSelectChange(pendingSelect, fulfilledSelect, value) });
@@ -86,20 +87,17 @@
     pendingSelect.disable();
     fulfilledSelect.disable();
 
-    // --- 🚀 [V12 檢查點] ---
-    // 設定一個 15 秒的「看門狗」計時器
     watchdogTimer = setTimeout(() => {
-      console.error('[FRONTEND V12] WATCHDOG TIMEOUT: 15 seconds passed. Backend is stuck or serialization failed.');
-      onFailure('TIMEOUT: The server took too long to respond. It might be stuck (Serialization Failure). Please check backend logs.');
-    }, 15000); // 15 秒
+      console.error('[FRONTEND V12.5] WATCHDOG TIMEOUT: 15 seconds passed.');
+      onFailure('TIMEOUT: The server took too long to respond.');
+    }, 15000); 
 
-    console.log('[FRONTEND V12] Calling google.script.run.getInitialBolData()...');
+    console.log('[FRONTEND V12.5] Calling google.script.run.getInitialBolData()...');
     google.script.run
-        .withSuccessHandler(onInitialDataLoaded)
-        .withFailureHandler(onFailure) 
+        .withSuccessHandler(onInitialDataLoaded) // V12.5 onInitialDataLoaded 已更新
+        .withFailureHandler(onFailure) // V12.5 onFailure 已更新
         .getInitialBolData();
     
-    // ... (其他事件監聽器保持不變) ...
     document.getElementById('bol-form').addEventListener('submit', handleFormSubmit);
     document.getElementById('add-bol-btn').addEventListener('click', () => addBolEntry());
     const bolContainer = document.getElementById('bol-entries-container');
@@ -111,20 +109,24 @@
   });
 
   function handleSelectChange(primarySelect, secondarySelect, value) {
+    // 'value' 仍然是 PO|SKU Key (e.g., "#PO25914|F101601")
     if (value) {
-      loadItemForEditing(value);
-      if (secondarySelect) secondarySelect.setValue('', true);
+      // 獲取完整的顯示文字 (PO|SKU (Model)) 並設置到 header
+      const displayText = primarySelect.getOption(value).textContent;
+      loadItemForEditing(value, displayText);
+      if (secondarySelect) secondarySelect.setValue('', true); // 清空另一個下拉選單
     }
   }
 
-  // BolEntryTool.html -> <script> tag
-
-  // BolEntryTool.html -> <script> tag
-
+  /**
+   * [V12.5 已修改]
+   * 處理來自後端的 JSON 字串，並使用 {key, display} 物件填充下拉選單。
+   */
   function onInitialDataLoaded(dataString) {
     let data;
     try {
-      data = JSON.parse(dataString);
+      // --- 🚀 [V10.7 修復] ---
+      data = JSON.parse(dataString); 
     } catch (e) {
       onFailure('Failed to parse server response: ' + e.message);
       return;
@@ -148,23 +150,21 @@
 
     try {
         pendingSelect.clearOptions();
-        pendingSelect.addOptions(data.pendingList.map(item => ({ value: item, text: item })));
+        // --- 🚀 [V12.5 關鍵修改] data.pendingList 是一個物件陣列 [{key, display}] ---
+        pendingSelect.addOptions(data.pendingList.map(item => ({ value: item.key, text: item.display })));
         
-        // --- 🚀 [V12.5 關鍵修正] ---
-        // 依照您的要求，將提示詞改為 "Select PO|Model"
-        pendingSelect.control.placeholder = (data.pendingList.length > 0 ? "Select PO|Model" : "No pending items found");
-        // --- [修正結束] ---
+        // --- 🚀 [V12.5 關鍵修改] 使用 .control.placeholder 並更新提示詞 ---
+        pendingSelect.control.placeholder = (data.pendingList.length > 0 ? "Select PO|Model (SKU)" : "No pending items found");
         
         pendingSelect.enable();
         console.log('[FRONTEND V12.5] Pending dropdown populated.');
 
         fulfilledSelect.clearOptions();
-        fulfilledSelect.addOptions(data.fulfilledList.map(item => ({ value: item.key, text: item.key })));
+        // --- 🚀 [V12.5 關鍵修改] data.fulfilledList 是一個物件陣列 [{key, display}] ---
+        fulfilledSelect.addOptions(data.fulfilledList.map(item => ({ value: item.key, text: item.display })));
         
-        // --- 🚀 [V12.5 關鍵修正] ---
-        // 依照您的要求，將提示詞改為 "Select PO|Model"
-        fulfilledSelect.control.placeholder = (data.fulfilledList.length > 0 ? "Select PO|Model" : "No fulfilled items found");
-        // --- [修正結束] ---
+        // --- 🚀 [V12.5 關鍵修改] 使用 .control.placeholder 並更新提示詞 ---
+        fulfilledSelect.control.placeholder = (data.fulfilledList.length > 0 ? "Select PO|Model (SKU)" : "No fulfilled items found");
 
         fulfilledSelect.enable();
         console.log('[FRONTEND V12.5] Fulfilled dropdown populated.');
@@ -174,9 +174,13 @@
     }
   }
 
+  /**
+   * [V12.5 已修改]
+   * 修復 .setPlaceholder 為 .control.placeholder
+   */
   function onFailure(error) {
     clearTimeout(watchdogTimer); 
-    console.error('[FRONTEND V12.3] FAILURE: onFailure triggered.', error);
+    console.error('[FRONTEND V12.5] FAILURE: onFailure triggered.', error);
     showLoader(false);
     
     let errorMessage = 'An unexpected error occurred.';
@@ -188,8 +192,7 @@
 
     const errorPlaceholder = 'Error: ' + errorMessage;
     
-    // --- 🚀 [V12.3 關鍵修正] ---
-    // 這裡也必須修正，否則 onFailure 會自己產生錯誤
+    // --- 🚀 [V12.5 關鍵修改] ---
     if (pendingSelect && pendingSelect.control) {
         pendingSelect.clearOptions(); 
         pendingSelect.control.placeholder = errorPlaceholder;
@@ -200,25 +203,34 @@
         fulfilledSelect.control.placeholder = errorPlaceholder;
         fulfilledSelect.enable();
     }
-    // --- [修正結束] ---
+    // --- [修改結束] ---
     
     showStatus('Error: ' + errorMessage, 'danger', 10000); 
   }
   
-  // --- (其餘所有 helper 函數保持不變) ---
-
-  function loadItemForEditing(poSkuKey) {
+  /**
+   * [V12.5 已修改]
+   * 接收顯示文字 (displayText) 以更新標題
+   */
+  function loadItemForEditing(poSkuKey, displayText) {
     if (!poSkuKey) { document.getElementById('details-section').classList.add('d-none'); return; }
-    currentSelection = poSkuKey;
+    currentSelection = poSkuKey; // 儲存的 key 保持不變
     showLoader(true);
     document.getElementById('details-section').classList.add('d-none');
+    
+    // --- 🚀 [V12.5 關鍵修改] ---
+    // 如果 displayText 未傳入 (例如舊的調用)，則預設為 poSkuKey
+    const headerText = displayText || poSkuKey;
+    document.getElementById('editing-header').textContent = `Editing: ${headerText}`; 
+    // --- [修改結束] ---
+    
     google.script.run.withSuccessHandler(onExistingDataReceived).withFailureHandler(onFailure).getExistingBolData(poSkuKey);
   }
 
   function onExistingDataReceived(data) {
     showLoader(false);
     if (!data.success) { onFailure(data); return; }
-    document.getElementById('editing-header').textContent = `Editing: ${currentSelection}`;
+    // 標題已在 loadItemForEditing 中設定
     document.getElementById('act-ship-date').value = data.actShipDate || new Date().toISOString().split('T')[0];
     document.getElementById('fulfill-shipment-check').checked = data.isFulfilled;
     const container = document.getElementById('bol-entries-container');
@@ -291,11 +303,11 @@
       if (fulfilledSelect) fulfilledSelect.clear();
       pendingSelect.disable();
       fulfilledSelect.disable();
-      pendingSelect.setPlaceholder("Select PO|Model");
-      fulfilledSelect.setPlaceholder("Select PO|Model");
+      pendingSelect.control.placeholder = "Loading...";
+      fulfilledSelect.control.placeholder = "Loading...";
       // 重新設定看門狗
       watchdogTimer = setTimeout(() => {
-        console.error('[FRONTEND V12] WATCHDOG TIMEOUT (Reload): 15 seconds passed.');
+        console.error('[FRONTEND V12.5] WATCHDOG TIMEOUT (Reload): 15 seconds passed.');
         onFailure('TIMEOUT: The server took too long to reload data.');
       }, 15000);
       google.script.run.withSuccessHandler(onInitialDataLoaded).withFailureHandler(onFailure).getInitialBolData();
