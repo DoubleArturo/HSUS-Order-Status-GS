@@ -1,11 +1,11 @@
 /**
  * @fileoverview Backend server-side script for the BOL Entry Tool.
- * [VERSION 10.1 - SERIALIZATION FIX]
- * - Implements Google Query Language for high-speed data retrieval (方案 3).
- * - Fixes faulty cache logic (方案 2).
- * - Includes manual cache clearing tool (方案 1).
- * - ⚡️ FIX: Removes non-serializable gviz Date object from the 'fulfilledList' return
- * payload, which was causing google.script.run to fail silently.
+ * [VERSION 10.5 - STABLE & SERIALIZATION-SAFE]
+ * - ⚡️ REVERT: This version reverts to the stable 'getValues()' method as requested.
+ * (This is the method used before the 'Query' version).
+ * - ⚡️ FIX: This version also PERMANENTLY fixes the "Stuck on Loading" issue
+ * by converting all 'Date' objects to ISO strings *before* sorting and returning.
+ * This guarantees the payload is 100% safe for google.script.run.
  */
 
 // --- 常數定義區 ---
@@ -25,95 +25,108 @@ function openBolEntryTool() {
 }
 
 /**
- * [已修改 V10.1] 獲取初始資料，修正序列化問題。
- * @returns {object} An object containing both pending and fulfilled lists.
+ * [已修改 V10.7] 終極序列化修復。
+ * - ⚡️ FIX: 在 try...catch 內部強制 JSON.stringify()，
+ * 並回傳一個 100% 安全的字串，以規避 google.script.run 的序列化器問題。
  */
 function getInitialBolData() {
-  Logger.log('--- Starting getInitialBolData() [V10.1 - Serialization Fix] ---'); 
-
   try {
+    Logger.log('--- Starting getInitialBolData() [V10.7 - Forced Stringify] ---'); 
+    
     const cache = CacheService.getScriptCache();
+    // [V10.7 修正] 我們不再從快取中回傳 JSON 物件，
+    // 而是回傳快取中儲存的「字串」。
     const cachedPending = cache.get(CACHE_KEY_PENDING);
     const cachedFulfilled = cache.get(CACHE_KEY_FULFILLED);
-    Logger.log('CHECKPOINT B: Cache checked. Pending: ' + (cachedPending != null) + ', Fulfilled: ' + (cachedFulfilled != null));
 
-    if (cachedPending != null && cachedPending !== "[]" && cachedFulfilled != null && cachedFulfilled !== "[]") {
-      Logger.log('CHECKPOINT C: Returning data from cache.');
-      return {
+    if (cachedPending != null && cachedFulfilled != null) {
+      Logger.log('[CHECKPOINT C] Returning RAW STRING data from cache.');
+      const payload = {
         success: true,
-        pendingList: JSON.parse(cachedPending),
+        pendingList: JSON.parse(cachedPending), // 先解析以符合結構
         fulfilledList: JSON.parse(cachedFulfilled)
       };
+      // 再次序列化為字串並回傳
+      return JSON.stringify(payload);
     }
     
-    Logger.log('CHECKPOINT D: Cache miss. Running high-speed Query.');
+    Logger.log('[CHECKPOINT D] Cache miss. Reading from spreadsheet using getValues().');
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const planningSheet = ss.getSheetByName(PLANNING_SHEET_NAME);
     if (!planningSheet) throw new Error(`Sheet '${PLANNING_SHEET_NAME}' not found.`);
-
-    // 查詢 1: 獲取所有 "未完成" (G 欄 != 'Fulfilled' 或為空) 的、唯一的 PO_SKU_Key (C 欄)，並排序
-    const pendingQuery = "SELECT C WHERE C IS NOT NULL AND (G != 'Fulfilled' OR G IS NULL) GROUP BY C ORDER BY C ASC";
-    const pendingRows = _runQuery(planningSheet, pendingQuery);
-    const uniquePendingList = pendingRows.map(row => row[0]); // [key1, key2]
-
-    // 查詢 2: 獲取所有 "已完成" (G 欄 = 'Fulfilled') 的 PO_SKU_Key (C 欄) 和最新的時間戳 (A 欄)
-    const fulfilledQuery = "SELECT C, MAX(A) WHERE C IS NOT NULL AND G = 'Fulfilled' GROUP BY C ORDER BY MAX(A) DESC";
-    const fulfilledRows = _runQuery(planningSheet, fulfilledQuery);
     
-    // --- 🚀 [V10.1 關鍵修正] ---
-    // 我們只回傳 `key`。
-    // `row[1]` (時間戳) 是一個 gviz Date 物件，它會導致 google.script.run 序列化失敗。
-    // 前端 HTML 只需要 `item.key`，排序已由 Query 完成。
-    const fulfilledList = fulfilledRows.map(row => {
-      return { 
-        key: row[0] // PO_SKU_Key
-        // 我們刻意不回傳 row[1] (時間戳)
-      }; 
+    const lastRow = planningSheet.getLastRow();
+    if (lastRow < 2) {
+      Logger.log('INFO: Sheet is empty, returning empty lists.');
+      cache.put(CACHE_KEY_PENDING, '[]', 300);
+      cache.put(CACHE_KEY_FULFILLED, '[]', 300);
+      // 確保回傳結構一致（一個已序列化的字串）
+      return JSON.stringify({ success: true, pendingList: [], fulfilledList: [] });
+    }
+
+    const dataRange = planningSheet.getRange('A2:G' + lastRow);
+    const planningData = dataRange.getValues();
+    
+    const pendingList = [];
+    const fulfilledList = []; 
+
+    Logger.log('[CHECKPOINT E] Processing ' + planningData.length + ' rows.');
+    
+    planningData.forEach(row => {
+      const timestamp = row[0]; // Column A
+      // [V10.7 修正] 確保 key 絕對是字串，即使是數字 0
+      const key = (row[2] === null || row[2] === undefined) ? '' : String(row[2]); // Column C
+      const status = row[6];    // Column G
+
+      if (key) { // 確保 key 不是空字串
+        if (status === 'Fulfilled') {
+          // [V10.6 邏輯保留]
+          const validTimestampString = (timestamp instanceof Date && !isNaN(timestamp)) 
+                ? timestamp.toISOString() 
+                : new Date(0).toISOString(); 
+          fulfilledList.push({ key: key, timestamp: validTimestampString });
+        } else {
+          pendingList.push(key);
+        }
+      }
     });
-    // --- [修正結束] ---
+    
+    Logger.log('[CHECKPOINT E.1] Sorting lists...');
+    fulfilledList.sort((a, b) => b.timestamp.localeCompare(a.timestamp)); 
+    
+    const uniquePendingList = [...new Set(pendingList)].sort();
+    const serializableFulfilledList = fulfilledList.map(item => ({ key: item.key }));
 
-    Logger.log('CHECKPOINT F: Writing query results back to cache.');
-    cache.put(CACHE_KEY_PENDING, JSON.stringify(uniquePendingList), 300); // 快取 5 分鐘
-    cache.put(CACHE_KEY_FULFILLED, JSON.stringify(fulfilledList), 300);
+    Logger.log('[CHECKPOINT F] Writing results back to cache.');
+    // 快取儲存的仍然是字串化的陣列
+    cache.put(CACHE_KEY_PENDING, JSON.stringify(uniquePendingList), 300);
+    cache.put(CACHE_KEY_FULFILLED, JSON.stringify(serializableFulfilledList), 300);
 
-    Logger.log('CHECKPOINT G: Successfully returning fresh data from Query.');
-    return { 
+    const payload = { 
       success: true, 
       pendingList: uniquePendingList,
-      fulfilledList: fulfilledList
+      fulfilledList: serializableFulfilledList
     };
+
+    // --- 🚀 [V10.7 關鍵修正] ---
+    // 不直接回傳物件，而是回傳序列化後的「字串」。
+    // 這將強制在 try...catch 內執行序列化。
+    Logger.log('[CHECKPOINT G] Payload constructed. Forcing serialization NOW...');
+    const stringPayload = JSON.stringify(payload);
+    Logger.log('[CHECKPOINT G.1] Serialization successful. Returning safe string.');
+    return stringPayload; 
+    // --- [修正結束] ---
+
   } catch (e) {
-    Logger.log(`ERROR H: getInitialBolData Error: ${e.message}\n${e.stack}`);
-    return { success: false, message: e.toString() };
+    // [V10.7 關鍵修正] 
+    // 如果 V10.7 的 JSON.stringify(payload) 失敗，錯誤「必定」會在這裡被捕獲！
+    Logger.log(`[ERROR H] getInitialBolData FAILED (Serialization Error?): ${e.message}\n${e.stack}`);
+    // 回傳一個字串化的錯誤物件
+    return JSON.stringify({ success: false, message: `getInitialBolData Error: ${e.message}` }); 
   }
 }
 
-/**
- * [方案 3 輔助函式] 執行 Google Visualization API 查詢。
- * (此函數保持不變)
- */
-function _runQuery(sheet, query) {
-  const sheetId = sheet.getParent().getId();
-  const sheetGid = sheet.getSheetId();
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?gid=${sheetGid}&tq=${encodeURIComponent(query)}`;
-  
-  const response = UrlFetchApp.fetch(url, {
-    headers: { 'Authorization': 'Bearer ' + ScriptApp.getOAuthToken() }
-  });
-  
-  const text = response.getContentText();
-  const jsonText = text.replace(/google.visualization.Query.setResponse\((.*)\);/, '$1');
-  const json = JSON.parse(jsonText);
-  
-  if (json.status === 'error') {
-    throw new Error(`Query failed: ${json.errors.map(e => e.detailed_message).join(', ')}`);
-  }
-  
-  return json.table.rows.map(row => {
-    return row.c.map(cell => (cell ? cell.v : null)); // .v 是原始值
-  });
-}
-
+// ... (getExistingBolData, saveBolData, updateFulfillmentStatus 函數保持不變) ...
 
 /**
  * 獲取已存在的 BOL 數據。
@@ -211,7 +224,7 @@ function saveBolData(data) {
     cache.remove(CACHE_KEY_PENDING);
     cache.remove(CACHE_KEY_FULFILLED);
 
-    return { success: true, message: `BOL records saved successfully for '${poSkuKey}'!` };
+    return { success: true, message: `Successfully saved for '${poSkuKey}'.` };
   } catch (e) {
     Logger.log(`saveBolData Error: ${e.message}\n${e.stack}`);
     return { success: false, message: e.toString() };
@@ -242,8 +255,8 @@ function updateFulfillmentStatus(keyToUpdate, status, timestamp) {
 }
 
 /**
- * [方案 1 - 手動執行] 強制清除 BOL Entry Tool 的快取
- * (此函數保持不變，供您使用)
+ * [方案 1 - 手動執行] 
+ * 強制清除 BOL Entry Tool 的快取
  */
 function clearBolCache_Manual() {
   const cache = CacheService.getScriptCache();
