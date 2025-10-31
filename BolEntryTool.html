@@ -1,4 +1,3 @@
-<!-- VERSION 10 - Improved Tom Select styling -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -39,21 +38,20 @@
     }
     h4, h5 { color: #212529; }
     
-    /* [V10 修改] Tom Select 樣式微調，使其更美觀且與 Bootstrap 整合 */
     .ts-wrapper {
-      width: 100%; /* 確保 wrapper 佔滿容器寬度 */
+      width: 100%; 
     }
     .ts-control {
-      padding: 0.375rem 0.75rem !important; /* 模擬 Bootstrap form-control 的 padding */
-      font-size: 1rem; /* 模擬 Bootstrap form-control 的字體大小 */
-      line-height: 1.5; /* 模擬 Bootstrap form-control 的行高 */
-      width: 100%; /* 確保輸入框本身也佔滿寬度 */
+      padding: 0.375rem 0.75rem !important; 
+      font-size: 1rem; 
+      line-height: 1.5; 
+      width: 100%; 
     }
     .ts-dropdown {
-      width: 100%; /* 確保下拉選單也佔滿寬度 */
+      width: 100%; 
     }
     .ts-control .ts-placeholder {
-      color: #6c757d; /* 調整 placeholder 顏色 */
+      color: #6c757d; 
     }
   </style>
 </head>
@@ -64,14 +62,14 @@
 
     <div class="mb-3">
       <label for="po-sku-select" class="form-label">Pending Items</label>
-      <select id="po-sku-select" placeholder="Search pending items..."></select>
+      <select id="po-sku-select"></select>
     </div>
     
     <hr class="my-4">
 
     <div id="fulfilled-section" class="mb-3">
         <label for="fulfilled-po-sku-select" class="form-label">Edit Fulfilled Items</label>
-        <select id="fulfilled-po-sku-select" placeholder="Search fulfilled items..."></select>
+        <select id="fulfilled-po-sku-select"></select>
     </div>
 
     <div id="details-section" class="d-none">
@@ -111,11 +109,49 @@
 
   document.addEventListener("DOMContentLoaded", function() {
     showLoader(true);
-    google.script.run.withSuccessHandler(onInitialDataLoaded).withFailureHandler(onFailure).getInitialBolData();
+
+    // --- 🚀 [UI 修正] ---
+    // 立即初始化 Tom Select，並顯示 "Loading..."
+    const commonSettings = {
+      maxOptions: 200,
+      allowEmptyOption: true,
+      placeholder: "Loading...", // <-- 滿足您的 "Loading" 需求
+    };
+    
+    pendingSelect = new TomSelect('#po-sku-select', {
+      ...commonSettings,
+      onChange: value => {
+        if (value) {
+          loadItemForEditing(value);
+          if (fulfilledSelect) fulfilledSelect.setValue('', true);
+        }
+      }
+    });
+    
+    fulfilledSelect = new TomSelect('#fulfilled-po-sku-select', {
+      ...commonSettings,
+      onChange: value => {
+        if (value) {
+          loadItemForEditing(value);
+          if (pendingSelect) pendingSelect.setValue('', true);
+        }
+      }
+    });
+    
+    // 在後端資料回來前，禁用下拉選單
+    pendingSelect.disable();
+    fulfilledSelect.disable();
+    // --- [UI 修正結束] ---
+
+    google.script.run
+        .withSuccessHandler(onInitialDataLoaded)
+        .withFailureHandler(onFailure) // onFailure 現在也會處理 UI
+        .getInitialBolData();
     
     document.getElementById('bol-form').addEventListener('submit', handleFormSubmit);
     document.getElementById('add-bol-btn').addEventListener('click', () => addBolEntry());
 
+    // (其他事件監聽器保持不變)
     const bolContainer = document.getElementById('bol-entries-container');
     bolContainer.addEventListener('input', (event) => {
       if (event.target.classList.contains('shipping-fee-input')) {
@@ -136,84 +172,51 @@
     });
   });
 
-  // 位於 BolEntryTool.html <script> 區塊內
-
-function onInitialDataLoaded(data) {
+  function onInitialDataLoaded(data) {
     showLoader(false);
     console.log('FRONTEND CHECKPOINT 1: onInitialDataLoaded triggered. Data received:', data);
 
-    // 1. 處理失敗情況
     if (!data.success) {
-      // 使用更安全的錯誤處理，避免不必要的底層 API 呼叫
-      const errorMessage = data.message || 'Server returned an unsuccessful status.';
-      showStatus(errorMessage, 'danger');
-      console.error('FRONTEND ERROR: Initial data loading failed. Message:', data.message);
+      onFailure(data.message || 'Server returned an unsuccessful status.'); // 轉交給 onFailure 處理
       return;
     }
     
-    // 2. 數據結構檢查 (強化健壯性)
     if (!Array.isArray(data.pendingList) || !Array.isArray(data.fulfilledList)) {
-        showStatus('Error: Invalid data format received from server.', 'danger');
-        console.error('FRONTEND ERROR: Data structure invalid. Expected arrays for lists.');
+        onFailure('Error: Invalid data format received from server.');
         return;
     }
 
     console.log(`FRONTEND CHECKPOINT 2: Data structure confirmed. Pending: ${data.pendingList.length} items, Fulfilled: ${data.fulfilledList.length} items.`);
 
-    // 3. 填充下拉選單 (這裡涉及 TomSelect 初始化，是最可能觸發限制的地方)
+    // --- 🚀 [UI 修正] ---
+    // 不再建立新的 TomSelect，而是載入資料到已存在的實例中
     try {
-        populatePendingDropdown(data.pendingList);
+        // 載入 Pending
+        pendingSelect.clearOptions();
+        pendingSelect.addOptions(data.pendingList.map(item => ({ value: item, text: item })));
+        pendingSelect.setPlaceholder(data.pendingList.length > 0 ? "Search or select a pending item..." : "No pending items found");
+        pendingSelect.enable();
         console.log('FRONTEND CHECKPOINT 3a: populatePendingDropdown finished.');
 
-        populateFulfilledDropdown(data.fulfilledList);
+        // 載入 Fulfilled
+        fulfilledSelect.clearOptions();
+        fulfilledSelect.addOptions(data.fulfilledList.map(item => ({ value: item.key, text: item.key })));
+        fulfilledSelect.setPlaceholder(data.fulfilledList.length > 0 ? "Search or select a fulfilled item..." : "No fulfilled items found");
+        fulfilledSelect.enable();
         console.log('FRONTEND CHECKPOINT 3b: populateFulfilledDropdown finished.');
         
     } catch (e) {
-        // 如果在填充 (TomSelect) 過程中出錯，捕獲並記錄
-        console.error('FRONTEND ERROR: Failed to populate dropdowns (TomSelect issue).', e);
-        showStatus('Error during UI initialization: ' + e.message, 'danger');
+        onFailure(e.message || 'Error during UI initialization.');
     }
+    // --- [UI 修正結束] ---
 
     console.log('FRONTEND CHECKPOINT 4: onInitialDataLoaded completed successfully.');
-}
+  }
+
+  // --- 🚀 [UI 修正] ---
+  // 刪除舊的 populatePendingDropdown 和 populateFulfilledDropdown 函數
+  // (它們的功能已合併到 onInitialDataLoaded)
   
-  function populatePendingDropdown(list) {
-    if (pendingSelect) pendingSelect.destroy();
-    const selectEl = document.getElementById('po-sku-select');
-    
-    pendingSelect = new TomSelect(selectEl, {
-      options: list.map(item => ({ value: item, text: item })),
-      maxOptions: 200,
-      placeholder: "Search or select a pending item...",
-      allowEmptyOption: true,
-      onChange: value => {
-        if (value) {
-          loadItemForEditing(value);
-          if (fulfilledSelect) fulfilledSelect.setValue('', true);
-        }
-      }
-    });
-  }
-
-  function populateFulfilledDropdown(list) {
-    if (fulfilledSelect) fulfilledSelect.destroy();
-    const selectEl = document.getElementById('fulfilled-po-sku-select');
-
-    fulfilledSelect = new TomSelect(selectEl, {
-      options: list.map(item => ({ value: item.key, text: item.key })),
-      maxOptions: 200,
-      placeholder: "Search or select a fulfilled item...",
-      allowEmptyOption: true,
-      onChange: value => {
-        if (value) {
-          loadItemForEditing(value);
-          if (pendingSelect) pendingSelect.setValue('', true);
-        }
-      }
-    });
-  }
-
-
   function loadItemForEditing(poSkuKey) {
     if (!poSkuKey) {
       document.getElementById('details-section').classList.add('d-none');
@@ -314,31 +317,47 @@ function onInitialDataLoaded(data) {
       currentSelection = null;
       if (pendingSelect) pendingSelect.clear();
       if (fulfilledSelect) fulfilledSelect.clear();
+      
+      // 重新載入下拉選單 (會顯示 Loading...)
+      pendingSelect.disable();
+      fulfilledSelect.disable();
+      pendingSelect.setPlaceholder("Loading...");
+      fulfilledSelect.setPlaceholder("Loading...");
       google.script.run.withSuccessHandler(onInitialDataLoaded).withFailureHandler(onFailure).getInitialBolData();
     } else {
       showStatus(response.message, 'danger');
     }
   }
 
-  // 新程式碼：更簡潔、更安全的錯誤處理
-function onFailure(error) {
-  showLoader(false);
-  document.getElementById('submit-btn').disabled = false;
-  
-  // 核心改動：嘗試安全地獲取錯誤訊息，並使用一個簡潔的替代方案
-  let errorMessage = 'An unexpected error occurred.'; // 預設錯誤
-  
-  if (typeof error === 'object' && error !== null) {
-      // 如果 error 是一個物件，嘗試獲取其 message
-      errorMessage = error.message || 'Server execution failed.';
-  } else if (typeof error === 'string') {
-      // 如果 error 是一個字串
-      errorMessage = error;
+  // --- 🚀 [UI 修正] ---
+  // 更新 onFailure 函數，以處理 TomSelect 的錯誤狀態
+  function onFailure(error) {
+    showLoader(false);
+    document.getElementById('submit-btn').disabled = false;
+    
+    let errorMessage = 'An unexpected error occurred.';
+    if (typeof error === 'object' && error !== null) {
+        errorMessage = error.message || 'Server execution failed.';
+    } else if (typeof error === 'string') {
+        errorMessage = error;
+    }
+
+    // 在 TomSelect 控制項中顯示錯誤
+    const errorPlaceholder = 'Error: ' + errorMessage;
+    if (pendingSelect) {
+        pendingSelect.clearOptions(); // 清除可能存在的舊選項
+        pendingSelect.setPlaceholder(errorPlaceholder);
+        pendingSelect.enable(); // 允許用戶點擊，即使是空的
+    }
+    if (fulfilledSelect) {
+        fulfilledSelect.clearOptions();
+        fulfilledSelect.setPlaceholder(errorPlaceholder);
+        fulfilledSelect.enable();
+    }
+    
+    showStatus('Error: ' + errorMessage, 'danger', 10000); // 延長顯示時間
+    console.error(error);
   }
-  
-  showStatus('Error: ' + errorMessage, 'danger', 10000); // 延長顯示時間
-  console.error(error);
-}
   
   function showStatus(message, type = 'info', duration = 5000) {
     const statusDiv = document.getElementById('status-message');
