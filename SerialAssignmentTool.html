@@ -18,8 +18,6 @@
     .status-available { color: #198754; }
     .status-non-inbound { color: #6c757d; }
     .status-not-found { color: #dc3545; }
-
-    /* STYLES FOR CUSTOM DROPDOWN */
     .custom-dropdown-menu {
       max-height: 300px;
       overflow-y: auto;
@@ -110,22 +108,46 @@
       document.getElementById('serial-search-input').addEventListener('keyup', (e) => { if (e.key === 'Enter') handleSerialSearch(); });
     });
 
+    /**
+     * [V10.7 修復套用]
+     * 呼叫後端並使用 JSON.parse 解析回傳的字串。
+     */
     function loadInitialData() {
       showLoader(true);
       google.script.run
-        .withSuccessHandler(lists => {
-          populatePoSkuDropdowns(lists);
-          showLoader(false);
+        // --- 🚀 [V10.7 關鍵修正] ---
+        // 'lists' 參數現在是 'dataString'，需要被解析
+        .withSuccessHandler(dataString => {
+          try {
+            // 解析從後端傳來的 JSON 字串
+            const lists = JSON.parse(dataString); // 'lists' 應為 { pending, finished }
+            
+            // 檢查回傳的結構是否正確
+            if (lists && lists.pending && lists.finished) {
+              populatePoSkuDropdowns(lists);
+            } else {
+              // 處理 lists 不是 { pending, finished } 的情況
+              throw new Error("Invalid data structure received from server.");
+            }
+            showLoader(false);
+          } catch (e) {
+            // 如果 JSON.parse 失敗，顯示錯誤
+            showError("Failed to parse server response: " + e.message);
+          }
         })
         .withFailureHandler(showError)
-        .getPoSkuLists();
+        .getPoSkuLists(); // 函數名稱保持不變
     }
 
+    /**
+     * [V12.5 已修改]
+     * 使用 {key, display} 物件填充下拉選單。
+     */
     function populatePoSkuDropdowns({ pending, finished }) {
       const setupDropdown = (btnId, menuId, placeholder, list, type) => {
         const btn = document.getElementById(btnId).querySelector('span');
         const menu = document.getElementById(menuId);
-        btn.textContent = placeholder;
+        btn.textContent = placeholder; // 初始 placeholder
         menu.innerHTML = '';
 
         const searchWrapper = document.createElement('div');
@@ -140,14 +162,19 @@
         menu.appendChild(searchWrapper);
 
         if (list.length > 0) {
+           // --- 🚀 [V12.5 關鍵] 更新 placeholder ---
+          btn.textContent = `Select ${type} PO|Model (SKU)`;
           list.forEach(item => {
             const a = document.createElement('a');
             a.className = 'dropdown-item';
-            a.textContent = item;
-            a.addEventListener('click', () => handleDropdownSelect(item, type));
+            // --- 🚀 [V12.5 關鍵] 使用 item.display ---
+            a.textContent = item.display; 
+            // --- 🚀 [V12.5 關鍵] 傳遞 item.key ---
+            a.addEventListener('click', () => handleDropdownSelect(item.key, item.display, type)); 
             menu.appendChild(a);
           });
         } else {
+          btn.textContent = `No ${type} items found`;
           const disabledItem = document.createElement('span');
           disabledItem.className = 'dropdown-item text-muted';
           disabledItem.textContent = `No ${type} items`;
@@ -156,18 +183,25 @@
       };
       
       setupDropdown('pending-dropdown-btn', 'pending-dropdown-menu', 'Select a pending item...', pending, 'pending');
-      setupDropdown('finished-dropdown-btn', 'finished-dropdown-menu', 'Select a finished item to edit...', finished, 'finished');
+      setupDropdown('finished-dropdown-btn', 'finished-dropdown-menu', 'Select a finished item...', finished, 'finished');
     }
 
-    function handleDropdownSelect(value, type) {
-      if (type === 'pending') {
-        document.getElementById('pending-dropdown-btn').querySelector('span').textContent = value;
-        document.getElementById('finished-dropdown-btn').querySelector('span').textContent = 'Select a finished item to edit...';
-      } else {
-        document.getElementById('finished-dropdown-btn').querySelector('span').textContent = value;
-        document.getElementById('pending-dropdown-btn').querySelector('span').textContent = 'Select a pending item...';
-      }
-      handlePoSkuSelect(value, type);
+    /**
+     * [V12.5 已修改]
+     * 接收 poSkuKey 和 displayText。
+     */
+    function handleDropdownSelect(poSkuKey, displayText, type) {
+      const btnSpanId = (type === 'pending') ? 'pending-dropdown-btn' : 'finished-dropdown-btn';
+      const otherBtnSpanId = (type === 'pending') ? 'finished-dropdown-btn' : 'pending-dropdown-btn';
+      
+      // 設定當前按鈕的文字
+      document.getElementById(btnSpanId).querySelector('span').textContent = displayText;
+      // 重置另一個按鈕的文字
+      document.getElementById(otherBtnSpanId).querySelector('span').textContent = (type === 'pending') 
+        ? 'Select finished PO|Model (SKU)'
+        : 'Select pending PO|Model (SKU)';
+
+      handlePoSkuSelect(poSkuKey, type);
     }
 
     /** MODIFIED: Now fetches assigned serials for BOTH pending and finished types */
@@ -176,7 +210,13 @@
       if (!currentPoSku) return;
 
       resetAssignmentState();
-      const sku = currentPoSku.split('|')[1];
+      // --- 🚀 [V12.5 修正] SKU 應從 key 的第二部分獲取 ---
+      const sku = currentPoSku.split('|')[1] || ''; 
+      if (!sku) {
+        showError(`Invalid PO|SKU key: ${currentPoSku}. SKU not found.`);
+        return;
+      }
+      // --- [修正結束] ---
       showLoader(true);
 
       try {
@@ -190,7 +230,7 @@
         assignments = assignedSerials;
 
         populateBolList(bols);
-        updateBolListWithAssignments(); // Always update UI with any existing assignments
+        updateBolListWithAssignments(); 
 
         showLoader(false);
         document.getElementById('step2').classList.remove('d-none');
@@ -232,7 +272,7 @@
                 }
             })
             .withFailureHandler(showError)
-            .markAssignmentAsFinished(currentPoSku);
+            .updateAssignmentCompletionStatus(currentPoSku, true); // 傳遞 true
     }
 
     function handleReopen() {
@@ -249,7 +289,7 @@
                 }
             })
             .withFailureHandler(showError)
-            .reopenAssignment(currentPoSku);
+            .updateAssignmentCompletionStatus(currentPoSku, false); // 傳遞 false
     }
 
     function resetAssignmentState() {
@@ -262,8 +302,8 @@
     
     function resetFullView() {
         resetAssignmentState();
-        document.getElementById('pending-dropdown-btn').querySelector('span').textContent = 'Select a pending item...';
-        document.getElementById('finished-dropdown-btn').querySelector('span').textContent = 'Select a finished item to edit...';
+        document.getElementById('pending-dropdown-btn').querySelector('span').textContent = 'Select pending PO|Model (SKU)';
+        document.getElementById('finished-dropdown-btn').querySelector('span').textContent = 'Select finished PO|Model (SKU)';
         currentPoSku = '';
     }
 
@@ -293,8 +333,8 @@
             const displayDiv = document.getElementById(`serials-for-${bolNumber}`);
             if (displayDiv && selectedSerials.length > 0) {
                 displayDiv.textContent = `Assigned: ${selectedSerials.join(', ')}`;
-                displayDiv.classList.remove('text-muted');
-                displayDiv.classList.add('text-success');
+            } else if (displayDiv) {
+                 displayDiv.textContent = `No serials assigned yet.`;
             }
         }
     }
@@ -309,7 +349,7 @@
     }
     function showError(error) {
       showLoader(false);
-      const message = typeof error === 'object' ? error.message : error;
+      const message = (typeof error === 'object' && error !== null) ? error.message : String(error);
       showStatus(message, 'danger');
     }
     function populateBolList(bols) {
@@ -325,7 +365,7 @@
         item.innerHTML = `
           <div>
             <strong>${bol.bolNumber}</strong> (Shipped Qty: ${bol.shippedQty})
-            <div class="assigned-serials" id="serials-for-${bol.bolNumber}">No serials assigned yet.</div>
+            <div class="assigned-serials text-muted" id="serials-for-${bol.bolNumber}">No serials assigned yet.</div>
           </div>
           <button class="btn btn-outline-primary btn-sm">Select Serials</button>
         `;
@@ -366,7 +406,7 @@
         const modal = new bootstrap.Modal(modalEl);
         document.getElementById('modal-title').textContent = `Select up to ${shippedQty} Serials for ${bolNumber}`;
         const currentlyAssignedToThisBol = assignments[bolNumber] || [];
-        const serialsForPicker = [...new Set([...availableSerials, ...currentlyAssignedToThisBol])];
+        const serialsForPicker = [...new Set([...availableSerials, ...currentlyAssignedToThisBol])].sort();
         
         renderSerialCheckboxes(serialsForPicker);
         
@@ -470,8 +510,8 @@
             content += `<strong>PO#/Quote#:</strong> ${result.poQuote}<br>`;
             content += `<strong>BOL#:</strong> ${result.bol}<br>`;
             content += `<strong>Date:</strong> ${result.date}`;
-        } else if (result.status === 'Not Found') {
-            content = `<div class="${statusClass}">Serial number not found in the database.</div>`;
+        } else if (result.status === 'Not Found' || result.status === 'Non-Inbound') {
+            content = `<div class="${statusClass}">Status: ${result.status}</div>`;
         } else if (result.status === 'Error') {
              content = `<div class="status-not-found">Error: ${result.message}</div>`;
         }
